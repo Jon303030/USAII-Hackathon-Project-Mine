@@ -1,0 +1,11 @@
+node_modules
+.next
+out
+storage
+uploads
+.git
+.vscode
+.idea
+*.log
+defect-classification
+defect-classification.zip

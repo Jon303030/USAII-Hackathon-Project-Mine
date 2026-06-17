@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+
+# Next.js
+.next/
+out/
+
+# production
+dist/
+build/
+
+# env
+.env
+.env.*
+
+# logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# local PVC/runtime data
+storage/
+uploads/
+*.local
+tsconfig.tsbuildinfo
+
+# old reference project and archives
+defect-classification/
+defect-classification.zip
+defect-*/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
