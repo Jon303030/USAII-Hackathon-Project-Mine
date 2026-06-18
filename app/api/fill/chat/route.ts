@@ -20,32 +20,35 @@ export async function POST(request: Request) {
       return Response.json({ error: 'sessionId is required' }, { status: 400 });
     }
 
-    let response;
+    let result;
 
     if (audioData?.data) {
       // Handle audio message
-      response = await processAudioMessage(
-        sessionId,
-        audioData.data,
-        audioData.mimeType,
-        language as any,
-      );
+      result = await processAudioMessage(sessionId, audioData.data, audioData.mimeType, language);
     } else if (message) {
       // Handle text message
-      response = await processUserMessage(sessionId, message, language as any);
+      result = await processUserMessage(sessionId, message, language);
     } else {
       return Response.json(
         { error: 'Either message or audioData is required' },
-        { status: 400 },
+        { status: 400 }
       );
     }
 
-    return Response.json(response);
+    return Response.json({
+      sessionId: sessionId,
+      reply: result.reply,
+      newState: result.newState,
+      extractedData: result.extractedData, 
+      record: result.extractedData,
+      confidence: result.confidence
+    });
+
   } catch (error) {
     console.error('Chat API error:', error);
     return Response.json(
       { error: 'Internal server error', details: String(error) },
-      { status: 500 },
+      { status: 500 }
     );
   }
 }

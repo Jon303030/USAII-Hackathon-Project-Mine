@@ -32,9 +32,10 @@ type VoiceComposerProps = {
   onSubmit: () => void;
   placeholder: string;
   disabled?: boolean;
+  languageCode?: string;
 };
 
-export function VoiceComposer({ value, onChange, onSubmit, placeholder, disabled }: VoiceComposerProps) {
+export function VoiceComposer({ value, onChange, onSubmit, placeholder, disabled, languageCode = 'en-US' }: VoiceComposerProps) {
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const [listening, setListening] = useState(false);
   const [voiceAvailable, setVoiceAvailable] = useState(false);
@@ -49,7 +50,7 @@ export function VoiceComposer({ value, onChange, onSubmit, placeholder, disabled
     const recognition = new Recognition();
     recognition.continuous = false;
     recognition.interimResults = true;
-    recognition.lang = 'en-US';
+    recognition.lang = languageCode;
     recognition.onresult = (event) => {
       const transcript = Array.from(event.results)
         .map((result) => result[0].transcript)
@@ -61,7 +62,7 @@ export function VoiceComposer({ value, onChange, onSubmit, placeholder, disabled
     recognitionRef.current = recognition;
 
     return () => recognition.stop();
-  }, [onChange]);
+  }, [languageCode, onChange]);
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -3,10 +3,12 @@
 import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LogIn } from 'lucide-react';
+import { useLanguage } from '@/components/LanguageProvider';
 import { TopNav } from '@/components/TopNav';
 
 export default function LoginPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [username, setUsername] = useState('Ali');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -26,7 +28,11 @@ export default function LoginPage() {
     setLoading(false);
 
     if (!response.ok) {
-      setError(payload.error ?? 'Login failed');
+      setError(
+        payload.error === 'Name is required.'
+          ? t({ en: 'Name is required.', zh: '请输入姓名。' })
+          : payload.error ?? t({ en: 'Login failed', zh: '登录失败' }),
+      );
       return;
     }
 
@@ -41,20 +47,20 @@ export default function LoginPage() {
         <form className="band login-panel" onSubmit={handleSubmit}>
           <div className="page-head" style={{ marginBottom: 18 }}>
             <div>
-              <h1>Login</h1>
-              <p>Demo login for the fill workflow.</p>
+              <h1>{t({ en: 'Login', zh: '登录' })}</h1>
+              <p>{t({ en: 'Demo login for the fill workflow.', zh: '填写流程的示例登录。' })}</p>
             </div>
           </div>
 
           <div style={{ display: 'grid', gap: 14 }}>
             <label className="field">
-              <span>Name</span>
+              <span>{t({ en: 'Name', zh: '姓名' })}</span>
               <input className="input" value={username} onChange={(event) => setUsername(event.target.value)} />
             </label>
             {error ? <div className="notice">{error}</div> : null}
             <button className="btn primary" type="submit" disabled={loading}>
               <LogIn size={18} />
-              {loading ? 'Signing in...' : 'Continue'}
+              {loading ? t({ en: 'Signing in...', zh: '正在登录...' }) : t({ en: 'Continue', zh: '继续' })}
             </button>
           </div>
         </form>
