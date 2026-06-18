@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { BookmarkPlus, CheckCircle2, FileSearch, Sparkles } from 'lucide-react';
+import { useLanguage } from '@/components/LanguageProvider';
 import { VoiceComposer } from '@/components/VoiceComposer';
 
 type ReportQuestion = {
@@ -39,22 +40,20 @@ type NavigateInsight = {
   confidence: 'High' | 'Medium' | 'Low';
 };
 
-function speak(text: string) {
+function speak(text: string, language: 'en' | 'zh') {
   if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
   window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = language === 'zh' ? 'zh-CN' : 'en-US';
+  window.speechSynthesis.speak(utterance);
 }
 
 export function NavigateClient() {
+  const { language, t } = useLanguage();
   const [questions, setQuestions] = useState<ReportQuestion[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'assistant',
-      content: 'Tell me what report you need. I will ask 3 questions and search automatically.',
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [payload, setPayload] = useState<SearchPayload | null>(null);
   const [selected, setSelected] = useState<ReportResult | null>(null);
@@ -66,20 +65,37 @@ export function NavigateClient() {
   const searchDone = Boolean(payload);
 
   useEffect(() => {
-    fetch('/api/navigate/questions')
+    setQuestions([]);
+    setQuestionIndex(0);
+    setAnswers({});
+    setPayload(null);
+    setSelected(null);
+    setInsight(null);
+    setMessage('');
+    setMessages([
+      {
+        role: 'assistant',
+        content: t({
+          en: 'Tell me what report you need. I will ask 3 questions and search automatically.',
+          zh: '请告诉我您需要哪一种表格。我会问 3 个问题，然后自动搜索。',
+        }),
+      },
+    ]);
+
+    fetch(`/api/navigate/questions?lang=${language}`)
       .then((response) => response.json())
       .then((data: { questions: ReportQuestion[] }) => {
         setQuestions(data.questions);
         setMessages((current) => [...current, { role: 'assistant', content: data.questions[0].label }]);
       });
-  }, []);
+  }, [language, t]);
 
   async function search(nextAnswers: Record<string, string>) {
     setLoading(true);
     const response = await fetch('/api/navigate/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers: nextAnswers, other: '' }),
+      body: JSON.stringify({ answers: nextAnswers, other: '', language }),
     });
     const data = await response.json();
     setPayload(data);
@@ -88,7 +104,10 @@ export function NavigateClient() {
       ...current,
       {
         role: 'assistant',
-        content: data.results.length > 0 ? `I found ${data.results.length} report result(s).` : 'I could not find a match yet.',
+        content:
+          data.results.length > 0
+            ? t({ en: `I found ${data.results.length} report result(s).`, zh: `我找到 ${data.results.length} 个表格结果。` })
+            : t({ en: 'I could not find a match yet.', zh: '目前还没有找到匹配结果。' }),
       },
     ]);
     setLoading(false);
@@ -121,11 +140,12 @@ export function NavigateClient() {
       body: JSON.stringify({
         keywords: payload.keywords,
         selectedReportId: selected?.id,
+        language,
       }),
     });
     const data = await response.json();
     setInsight(data.insight);
-    speak(data.insight.spokenSummary);
+    speak(data.insight.spokenSummary, language);
   }
 
   async function saveFavorite(report: ReportResult) {
@@ -135,7 +155,11 @@ export function NavigateClient() {
       body: JSON.stringify({ reportId: report.id }),
     });
     const data = await response.json();
-    setMessage(data.message);
+    setMessage(
+      response.ok
+        ? t({ en: data.message ?? `${report.title} saved.`, zh: `${report.title} 已加入收藏。` })
+        : t({ en: data.error ?? 'Save failed.', zh: '收藏失败。' }),
+    );
   }
 
   return (
@@ -144,8 +168,8 @@ export function NavigateClient() {
         <div className="wa-chat-header">
           <div className="wa-avatar">N</div>
           <div>
-            <strong>Navigate Chatbot</strong>
-            <span>Choose answers or speak into the message box</span>
+            <strong>{t({ en: 'Navigate Chatbot', zh: '找表格聊天助手' })}</strong>
+            <span>{t({ en: 'Choose answers or speak into the message box', zh: '可以点击答案，也可以对输入框说话' })}</span>
           </div>
         </div>
 
@@ -165,15 +189,16 @@ export function NavigateClient() {
               ))}
             </div>
           ) : null}
-          {loading ? <div className="wa-bubble">Searching reports...</div> : null}
+          {loading ? <div className="wa-bubble">{t({ en: 'Searching reports...', zh: '正在搜索表格...' })}</div> : null}
         </div>
 
         <VoiceComposer
           value={input}
           onChange={setInput}
           onSubmit={() => answerCurrentQuestion(input)}
-          placeholder={currentQuestion ? 'Type or speak your answer' : 'Search completed'}
+          placeholder={currentQuestion ? t({ en: 'Type or speak your answer', zh: '输入或说出您的答案' }) : t({ en: 'Search completed', zh: '搜索已完成' })}
           disabled={!currentQuestion || searchDone || loading}
+          languageCode={language === 'zh' ? 'zh-CN' : 'en-US'}
         />
       </section>
 
@@ -183,12 +208,12 @@ export function NavigateClient() {
             <span className="icon-pill">
               <FileSearch size={22} />
             </span>
-            Search Result
+            {t({ en: 'Search Result', zh: '搜索结果' })}
           </h2>
           {payload ? (
             <button className="btn" type="button" onClick={explainSearch}>
               <Sparkles size={18} />
-              Explain
+              {t({ en: 'Explain', zh: '说明' })}
             </button>
           ) : null}
         </div>
@@ -199,7 +224,7 @@ export function NavigateClient() {
           <>
             <div className="result-success">
               <CheckCircle2 size={20} />
-              {payload.results.length} result(s)
+              {t({ en: `${payload.results.length} result(s)`, zh: `${payload.results.length} 个结果` })}
             </div>
             <div className="keyword-row">
               {payload.keywords.map((keyword) => (
@@ -231,15 +256,15 @@ export function NavigateClient() {
                   <table>
                     <tbody>
                       <tr>
-                        <th>ID</th>
+                        <th>{t({ en: 'ID', zh: 'ID' })}</th>
                         <td>{selected.id}</td>
                       </tr>
                       <tr>
-                        <th>Updated</th>
+                        <th>{t({ en: 'Updated', zh: '更新日期' })}</th>
                         <td>{selected.updatedAt}</td>
                       </tr>
                       <tr>
-                        <th>Summary</th>
+                        <th>{t({ en: 'Summary', zh: '摘要' })}</th>
                         <td>{selected.summary}</td>
                       </tr>
                     </tbody>
@@ -248,10 +273,10 @@ export function NavigateClient() {
                 <div className="button-row">
                   <button className="btn" type="button" onClick={() => saveFavorite(selected)}>
                     <BookmarkPlus size={18} />
-                    Favorite
+                    {t({ en: 'Favorite', zh: '收藏' })}
                   </button>
                   <Link className="btn primary" href={`/view?reportId=${selected.id}`}>
-                    Open PDF
+                    {t({ en: 'Open PDF', zh: '打开 PDF' })}
                   </Link>
                 </div>
               </div>
@@ -259,13 +284,15 @@ export function NavigateClient() {
 
             {insight ? (
               <div className="insight-panel" style={{ marginTop: 14 }}>
-                <span className="status">{insight.confidence} confidence</span>
+                <span className="status">
+                  {insight.confidence} {t({ en: 'confidence', zh: '信心' })}
+                </span>
                 <p>{insight.spokenSummary}</p>
               </div>
             ) : null}
           </>
         ) : (
-          <div className="empty-state">Search results will appear here after the chatbot gets 3 answers.</div>
+          <div className="empty-state">{t({ en: 'Search results will appear here after the chatbot gets 3 answers.', zh: '聊天助手取得 3 个答案后，搜索结果会显示在这里。' })}</div>
         )}
       </aside>
     </div>

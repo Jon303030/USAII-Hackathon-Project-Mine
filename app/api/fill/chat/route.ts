@@ -6,11 +6,13 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     message?: string;
     answers?: Partial<Record<FillQuestion['id'], string>>;
+    language?: 'en' | 'zh';
   };
-  const record = body.answers ? fillFromAnswers(body.answers) : fillFromMessage(body.message ?? '');
+  const language = body.language === 'zh' ? 'zh' : 'en';
+  const record = body.answers ? fillFromAnswers(body.answers, language) : fillFromMessage(body.message ?? '', language);
 
   return Response.json({
-    reply: fillReply(record),
+    reply: fillReply(record, language),
     record,
   });
 }

@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { Moon, Sun } from 'lucide-react';
+import { useLanguage } from './LanguageProvider';
 
 type Theme = 'light' | 'dark';
 
 export function ThemeToggle() {
+  const { t } = useLanguage();
   const [theme, setTheme] = useState<Theme>('light');
 
   useEffect(() => {
@@ -25,11 +27,11 @@ export function ThemeToggle() {
     <div className="theme-toggle" aria-label="Theme selector">
       <button className={theme === 'light' ? 'active' : ''} type="button" onClick={() => chooseTheme('light')}>
         <Sun size={16} />
-        Light
+        {t({ en: 'Light', zh: '浅色' })}
       </button>
       <button className={theme === 'dark' ? 'active' : ''} type="button" onClick={() => chooseTheme('dark')}>
         <Moon size={16} />
-        Dark
+        {t({ en: 'Dark', zh: '深色' })}
       </button>
     </div>
   );

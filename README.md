@@ -1,7 +1,8 @@
 # Report Workflow Hackthon
 
-Node.js 22 web app for three report workflows:
+Node.js 22 web app for report workflows:
 
+- `Senior Application Assistant` (`/assistant`): bilingual English/Chinese senior-friendly flow for language choice, basic information, form matching, draft filling, consent, volunteer verification, and SMS preview.
 - `Form Fill` (`/fill`): WhatsApp-style chatbot with text and voice input. The chatbot asks 3 questions, then fills and shows the result table.
 - `Navigator` (`/navigate`): WhatsApp-style chatbot with text and voice input. The chatbot asks 3 report-search questions, then shows matching reports.
 - `Form Viewer` (`/view`): file-explorer PDF management, upload, preview, page extraction, page deletion, merge, download, and PVC/local save.
@@ -51,17 +52,20 @@ app/                         Next.js App Router pages and HTTP API routes.
 app/page.tsx                 Main page. This is the dashboard.
 app/dashboard/               Redirects to `/` so there is only one dashboard entry.
 app/login/                   Simple demo login. Only the user's name is required.
+app/assistant/               Senior-friendly application assistant flow.
 app/fill/                    Fill page route. Imports the UI from `fill/`.
 app/navigate/                Navigate page route. Imports the UI from `navigate/`.
 app/view/                    PDF workspace page route. Imports the UI from `view/`.
 app/user-management/         User management page route for user/admin accounts.
 app/api/auth/                Login API.
+app/api/elderly/             Senior assistant APIs for form search and draft packages.
 app/api/fill/                Fill chatbot APIs: questions, chat result, and AI insight.
 app/api/navigate/            Navigate chatbot APIs: questions, search, and AI insight.
 app/api/pdf/                 PDF APIs: list, upload, view/download, merge, extract pages, delete pages.
 app/api/users/               User management API backed by PVC/local JSON. Roles are only `user` or `admin`.
 
 backend/                     Server-side business helpers used by `app/api/`.
+backend/elderly/forms.ts     Local assistance form catalog, eligibility rules, draft package, and SMS text.
 backend/fill/chatbot.ts      Fill chatbot backend. Owns 3 questions, answer parsing, result filling, and insight text.
 backend/navigate/chatbot.ts  Navigate chatbot backend. Owns 3 questions, keyword extraction, search reply, and insight text.
 backend/reports.ts           Local demo report records and report search helper.

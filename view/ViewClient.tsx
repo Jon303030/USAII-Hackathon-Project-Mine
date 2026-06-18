@@ -3,6 +3,7 @@
 import { ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Download, FileText, FileStack, RefreshCw, Scissors, Search, Trash2, Upload } from 'lucide-react';
+import { useLanguage } from '@/components/LanguageProvider';
 
 type FavoriteReport = {
   id: string;
@@ -23,6 +24,7 @@ type PdfFile = {
 };
 
 export function ViewClient() {
+  const { t } = useLanguage();
   const searchParams = useSearchParams();
   const reportId = searchParams.get('reportId');
   const [favorites, setFavorites] = useState<FavoriteReport[]>([]);
@@ -80,7 +82,7 @@ export function ViewClient() {
       body: formData,
     });
     const data = await response.json();
-    setNotice(data.message ?? data.error ?? 'Upload finished');
+    setNotice(data.message ?? data.error ?? t({ en: 'Upload finished', zh: '上传完成' }));
     if (data.uploaded?.[0]) {
       setSelectedFile(data.uploaded[0]);
       setMergeFiles((current) => Array.from(new Set([...current, data.uploaded[0]])));
@@ -97,7 +99,7 @@ export function ViewClient() {
       body: JSON.stringify(body),
     });
     const data = await response.json();
-    setNotice(data.message ?? data.error ?? 'Done');
+    setNotice(data.message ?? data.error ?? t({ en: 'Done', zh: '完成' }));
     setBusy(false);
     await refresh();
     if (data.file?.name) {
@@ -115,15 +117,15 @@ export function ViewClient() {
     <div className="viewer-dashboard">
       <div className="metric-strip">
         <div className="mini-stat accent-blue">
-          <span>Selected form</span>
-          <strong>{selectedReport?.title ?? 'None'}</strong>
+          <span>{t({ en: 'Selected form', zh: '已选表格' })}</span>
+          <strong>{selectedReport?.title ?? t({ en: 'None', zh: '无' })}</strong>
         </div>
         <div className="mini-stat accent-green">
-          <span>PVC PDFs</span>
+          <span>{t({ en: 'PVC PDFs', zh: 'PVC PDF 文件' })}</span>
           <strong>{files.length}</strong>
         </div>
         <div className="mini-stat accent-amber">
-          <span>Merge queue</span>
+          <span>{t({ en: 'Merge queue', zh: '合并队列' })}</span>
           <strong>{mergeFiles.length}</strong>
         </div>
       </div>
@@ -132,16 +134,16 @@ export function ViewClient() {
         <aside className="viewer-panel library-panel">
           <div className="panel-heading">
             <div>
-              <span className="eyebrow">Library</span>
-              <h2>Forms & PDFs</h2>
+              <span className="eyebrow">{t({ en: 'Library', zh: '资料库' })}</span>
+              <h2>{t({ en: 'Forms & PDFs', zh: '表格与 PDF' })}</h2>
             </div>
-            <button className="btn" type="button" onClick={refresh} disabled={busy} title="Refresh PDF list">
+            <button className="btn" type="button" onClick={refresh} disabled={busy} title={t({ en: 'Refresh PDF list', zh: '刷新 PDF 列表' })}>
               <RefreshCw size={18} />
             </button>
           </div>
 
           <div className="viewer-section">
-            <h3>Favorites</h3>
+            <h3>{t({ en: 'Favorites', zh: '收藏' })}</h3>
             <div className="side-list dense">
               {favorites.map((favorite) => (
                 <button
@@ -158,16 +160,16 @@ export function ViewClient() {
               ))}
             </div>
             {favorites.length === 0 ? (
-              <p className="helper">Save a report in Navigator, then upload or open a PVC PDF.</p>
+              <p className="helper">{t({ en: 'Save a report in Navigator, then upload or open a PVC PDF.', zh: '请先在找表格页面收藏表格，然后上传或打开 PVC PDF。' })}</p>
             ) : null}
           </div>
 
           <div className="viewer-section">
             <div className="section-head compact">
-              <h3>PDF Files</h3>
-              <label className="btn" title="Upload PDF attachments">
+              <h3>{t({ en: 'PDF Files', zh: 'PDF 文件' })}</h3>
+              <label className="btn" title={t({ en: 'Upload PDF attachments', zh: '上传 PDF 附件' })}>
                 <Upload size={18} />
-                Upload
+                {t({ en: 'Upload', zh: '上传' })}
                 <input
                   type="file"
                   accept="application/pdf"
@@ -179,7 +181,7 @@ export function ViewClient() {
               </label>
             </div>
             <label className="field">
-              <span>Search file</span>
+              <span>{t({ en: 'Search file', zh: '搜索文件' })}</span>
               <span style={{ position: 'relative' }}>
                 <Search size={16} style={{ left: 12, position: 'absolute', top: 13, color: 'var(--muted)' }} />
                 <input
@@ -187,7 +189,7 @@ export function ViewClient() {
                   style={{ paddingLeft: 36 }}
                   value={fileFilter}
                   onChange={(event) => setFileFilter(event.target.value)}
-                  placeholder="Filter PDF name"
+                  placeholder={t({ en: 'Filter PDF name', zh: '筛选 PDF 名称' })}
                 />
               </span>
             </label>
@@ -197,7 +199,7 @@ export function ViewClient() {
                 <div className={`file-row compact ${selectedFile === file.name ? 'active' : ''}`} key={file.name}>
                   <input
                     type="checkbox"
-                    aria-label={`Select ${file.name} for merge`}
+                    aria-label={t({ en: `Select ${file.name} for merge`, zh: `选择 ${file.name} 进行合并` })}
                     checked={mergeFiles.includes(file.name)}
                     onChange={() => toggleMergeFile(file.name)}
                   />
@@ -208,7 +210,7 @@ export function ViewClient() {
                   <span className="file-meta">{Math.ceil(file.size / 1024)} KB</span>
                 </div>
               ))}
-              {filteredFiles.length === 0 ? <div className="empty-list">No PDF files in PVC yet.</div> : null}
+              {filteredFiles.length === 0 ? <div className="empty-list">{t({ en: 'No PDF files in PVC yet.', zh: 'PVC 里还没有 PDF 文件。' })}</div> : null}
             </div>
           </div>
         </aside>
@@ -216,19 +218,19 @@ export function ViewClient() {
         <section className="viewer-main">
           <div className="viewer-titlebar">
             <div>
-              <span className="eyebrow">Preview</span>
-              <h2>{selectedFile || 'No PDF selected'}</h2>
-              <p>{selectedReport?.summary ?? 'Upload a local PDF or open a PVC file to begin.'}</p>
+              <span className="eyebrow">{t({ en: 'Preview', zh: '预览' })}</span>
+              <h2>{selectedFile || t({ en: 'No PDF selected', zh: '未选择 PDF' })}</h2>
+              <p>{selectedReport?.summary ?? t({ en: 'Upload a local PDF or open a PVC file to begin.', zh: '请上传本地 PDF 或打开 PVC 文件开始。' })}</p>
             </div>
             {selectedFile ? (
               <a className="btn primary" href={`/api/pdf/files/${encodeURIComponent(selectedFile)}?download=1`}>
                 <Download size={18} />
-                Download
+                {t({ en: 'Download', zh: '下载' })}
               </a>
             ) : (
               <button className="btn primary" type="button" disabled>
                 <Download size={18} />
-                Download
+                {t({ en: 'Download', zh: '下载' })}
               </button>
             )}
           </div>
@@ -236,12 +238,12 @@ export function ViewClient() {
           {notice ? <div className="notice">{notice}</div> : null}
 
           {pdfUrl ? (
-            <iframe className="pdf-frame viewer-frame" src={pdfUrl} title="PDF preview" />
+            <iframe className="pdf-frame viewer-frame" src={pdfUrl} title={t({ en: 'PDF preview', zh: 'PDF 预览' })} />
           ) : (
             <div className="pdf-frame viewer-frame empty-pdf">
               <FileText size={52} />
-              <strong>No PDF selected</strong>
-              <span>Use Upload or choose a PDF from the library.</span>
+              <strong>{t({ en: 'No PDF selected', zh: '未选择 PDF' })}</strong>
+              <span>{t({ en: 'Use Upload or choose a PDF from the library.', zh: '请上传文件，或从资料库选择 PDF。' })}</span>
             </div>
           )}
         </section>
@@ -249,14 +251,14 @@ export function ViewClient() {
         <aside className="viewer-panel tools-panel">
           <div className="panel-heading">
             <div>
-              <span className="eyebrow">Tools</span>
-              <h2>Page Actions</h2>
+              <span className="eyebrow">{t({ en: 'Tools', zh: '工具' })}</span>
+              <h2>{t({ en: 'Page Actions', zh: '页面操作' })}</h2>
             </div>
           </div>
 
           <div className="tool-stack">
             <label className="field">
-              <span>Keep pages</span>
+              <span>{t({ en: 'Keep pages', zh: '保留页码' })}</span>
               <input className="input" value={pageInput} onChange={(event) => setPageInput(event.target.value)} />
             </label>
             <button
@@ -271,11 +273,11 @@ export function ViewClient() {
               }
             >
               <Scissors size={18} />
-              Extract
+              {t({ en: 'Extract', zh: '抽取' })}
             </button>
 
             <label className="field">
-              <span>Delete pages</span>
+              <span>{t({ en: 'Delete pages', zh: '删除页码' })}</span>
               <input className="input" value={deleteInput} onChange={(event) => setDeleteInput(event.target.value)} />
             </label>
             <button
@@ -290,7 +292,7 @@ export function ViewClient() {
               }
             >
               <Trash2 size={18} />
-              Delete
+              {t({ en: 'Delete', zh: '删除' })}
             </button>
 
             <button
@@ -304,12 +306,15 @@ export function ViewClient() {
               }
             >
               <FileStack size={18} />
-              Merge {mergeFiles.length > 0 ? `(${mergeFiles.length})` : ''}
+              {t({ en: 'Merge', zh: '合并' })} {mergeFiles.length > 0 ? `(${mergeFiles.length})` : ''}
             </button>
           </div>
 
           <p className="helper">
-            Use page ranges like 1,3-5. New PDFs are saved back into PVC and appear in the library.
+            {t({
+              en: 'Use page ranges like 1,3-5. New PDFs are saved back into PVC and appear in the library.',
+              zh: '可以使用 1,3-5 这样的页码范围。新的 PDF 会保存回 PVC，并显示在资料库。',
+            })}
           </p>
         </aside>
       </div>
