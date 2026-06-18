@@ -1,3 +1,23 @@
+/**
+ * Fill Workflow Chatbot - Refactored Version
+ * Now integrated with Gemini AI, multilingual support, and complete state machine
+ */
+
+import type {
+  ChatResponse,
+  DialogState,
+  FillInsight,
+  GeminiAIResponse,
+  Language,
+  Message,
+  UserProfile,
+  UserSession,
+} from '@/backend/types';
+import { geminiAIService } from '@/backend/ai-service';
+import { SessionManager, getSessionContext } from '@/backend/fill/session-manager';
+import { FormMatcher } from '@/backend/form-matcher';
+
+// ============== Legacy API Types (maintained for backward compatibility) ==============
 export type FillRecord = {
   name: string;
   email: string;
@@ -18,6 +38,7 @@ export type FillInsight = {
   confidence: 'High' | 'Medium' | 'Low';
 };
 
+// ============== Legacy API (maintained for frontend compatibility) ==============
 const emailPattern = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
 type Language = 'en' | 'zh';
 
@@ -130,4 +151,150 @@ export function buildFillInsight(record: FillRecord, messages: string[] = [], la
     missingFields,
     confidence: missingFields.length === 0 ? 'High' : 'Medium',
   };
+}
+
+// ============== New AI-Driven API ==============
+
+/**
+ * 处理文本消息（支持新的 Gemini 集成）
+ */
+export async function processUserMessage(
+  sessionId: string,
+  userMessage: string,
+  language: Language = 'zh_CN',
+): Promise<ChatResponse> {
+  // Get or create session
+  let session = await SessionManager.getSession(sessionId);
+
+  if (!session) {
+    // Extract phone from sessionId (format: session_<phone>_<timestamp>)
+    const phoneMatch = sessionId.match(/session_(.+)_\d+/);
+    const phone = phoneMatch?.[1] || 'unknown';
+    session = await SessionManager.createSession(phone, language);
+  }
+
+  // Get message history for AI context
+  const messageHistory = await SessionManager.getMessageHistory(sessionId, 10);
+  const geminiMessages: Parameters<typeof geminiAIService.callGemini>[0] = messageHistory.map((msg) => ({
+    role: msg.role,
+    parts: [{ text: msg.content }],
+  }));
+
+  // Get session context
+  const sessionContext = getSessionContext(session);
+
+  // Call Gemini AI
+  const aiResponse = await geminiAIService.callGemini(
+    [
+      ...geminiMessages,
+      {
+        role: 'user',
+        parts: [{ text: userMessage }],
+      },
+    ],
+    session.language,
+    session.state,
+    sessionContext,
+  );
+
+  // Update user profile
+  if (Object.keys(aiResponse.extracted_data).length > 0) {
+    await SessionManager.updateProfile(sessionId, aiResponse.extracted_data as Partial<UserProfile>);
+  }
+
+  // Add message to history
+  await SessionManager.addMessage(sessionId, {
+    role: 'user',
+    content: userMessage,
+  });
+
+  await SessionManager.addMessage(sessionId, {
+    role: 'assistant',
+    content: aiResponse.reply_to_user,
+  });
+
+  // Get updated session
+  session = (await SessionManager.getSession(sessionId))!;
+
+  // Return chat response
+  return {
+    sessionId,
+    reply: aiResponse.reply_to_user,
+    newState: (aiResponse.next_state as DialogState) || session.state,
+    extractedData: aiResponse.extracted_data as Partial<UserProfile>,
+    confidence: aiResponse.confidence || 'Medium',
+  };
+}
+
+/**
+ * 处理音频消息（语音转文字 + AI 理解）
+ */
+export async function processAudioMessage(
+  sessionId: string,
+  audioData: string, // Base64
+  mimeType: string,
+  language: Language = 'zh_CN',
+): Promise<ChatResponse> {
+  let session = await SessionManager.getSession(sessionId);
+
+  if (!session) {
+    const phoneMatch = sessionId.match(/session_(.+)_\d+/);
+    const phone = phoneMatch?.[1] || 'unknown';
+    session = await SessionManager.createSession(phone, language);
+  }
+
+  const messageHistory = await SessionManager.getMessageHistory(sessionId, 10);
+  const geminiMessages: Parameters<typeof geminiAIService.callGemini>[0] = messageHistory.map((msg) => ({
+    role: msg.role,
+    parts: [{ text: msg.content }],
+  }));
+
+  const sessionContext = getSessionContext(session);
+
+  // Call Gemini to process audio
+  const aiResponse = await geminiAIService.processAudioMessage(
+    audioData,
+    mimeType,
+    session.language,
+    geminiMessages,
+    session.state,
+    sessionContext,
+  );
+
+  // Update state
+  if (Object.keys(aiResponse.extracted_data).length > 0) {
+    await SessionManager.updateProfile(sessionId, aiResponse.extracted_data as Partial<UserProfile>);
+  }
+
+  await SessionManager.addMessage(sessionId, {
+    role: 'assistant',
+    content: aiResponse.reply_to_user,
+  });
+
+  session = (await SessionManager.getSession(sessionId))!;
+
+  return {
+    sessionId,
+    reply: aiResponse.reply_to_user,
+    newState: (aiResponse.next_state as DialogState) || session.state,
+    extractedData: aiResponse.extracted_data as Partial<UserProfile>,
+    confidence: aiResponse.confidence || 'Medium',
+  };
+}
+
+/**
+ * 在用户选择表格后，获取匹配的表格列表
+ */
+export async function findMatchingForms(sessionId: string) {
+  const session = await SessionManager.getSession(sessionId);
+  if (!session) return [];
+
+  return FormMatcher.matchForms(session.userProfile);
+}
+
+/**
+ * 完成会话
+ */
+export async function completeSession(sessionId: string): Promise<void> {
+  await SessionManager.completeSession(sessionId);
 }
