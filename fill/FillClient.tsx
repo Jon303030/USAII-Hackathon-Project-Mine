@@ -10,30 +10,12 @@ type Message = {
   content: string;
 };
 
-type FillQuestion = {
-  id: 'name' | 'email' | 'id';
-  label: string;
-  options: string[];
-};
-
-type FillRecord = {
-  name: string;
-  email: string;
-  id: string;
-  source: string;
-};
+type FillRecord = Record<string, any>;
 
 type FillInsight = {
   spokenSummary: string;
   highlights: string[];
   confidence: 'High' | 'Medium' | 'Low';
-};
-
-const initialRecord: FillRecord = {
-  name: '',
-  email: '',
-  id: '',
-  source: '',
 };
 
 function speak(text: string, language: 'en' | 'zh') {
@@ -46,84 +28,85 @@ function speak(text: string, language: 'en' | 'zh') {
 
 export function FillClient() {
   const { language, t } = useLanguage();
-  const [questions, setQuestions] = useState<FillQuestion[]>([]);
-  const [questionIndex, setQuestionIndex] = useState(0);
-  const [answers, setAnswers] = useState<Partial<Record<FillQuestion['id'], string>>>({});
+  
+  const [sessionId] = useState(() => `session_${Math.floor(Math.random() * 10000)}_${Date.now()}`);
+  
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
-  const [record, setRecord] = useState<FillRecord>(initialRecord);
+  const [record, setRecord] = useState<FillRecord>({});
   const [insight, setInsight] = useState<FillInsight | null>(null);
   const [loading, setLoading] = useState(false);
+  
+  const [dialogState, setDialogState] = useState<string>('INIT');
+  const completed = dialogState === 'COMPLETED';
 
-  const currentQuestion = questions[questionIndex];
-  const completed = Boolean(record.name && record.email);
-
-  const rows = useMemo(
-    () => [
-      [t({ en: 'Name', zh: '姓名' }), record.name || '-'],
-      [t({ en: 'Email', zh: '电邮' }), record.email || '-'],
-      [t({ en: 'ID', zh: 'ID' }), record.id || '-'],
-      [t({ en: 'Source', zh: '来源' }), record.source || '-'],
-    ],
-    [record, t],
-  );
+  const rows = useMemo(() => {
+    return Object.entries(record).map(([field, value]) => [
+      field.charAt(0).toUpperCase() + field.slice(1), 
+      String(value || '-')
+    ]);
+  }, [record]);
 
   useEffect(() => {
-    setQuestionIndex(0);
-    setAnswers({});
-    setRecord(initialRecord);
+    setRecord({});
     setInsight(null);
-    setMessages([
-      {
-        role: 'assistant',
-        content: t({
-          en: 'Hi. I will ask 3 quick questions, then fill the result table for you.',
-          zh: '您好。我会问三个简单问题，然后帮您填写结果表。',
-        }),
-      },
-    ]);
-    const rawUser = localStorage.getItem('report-workflow-user');
-    const user = rawUser ? (JSON.parse(rawUser) as { name?: string }) : null;
-    const name = user?.name ?? 'Ali';
-
-    fetch(`/api/fill/questions?name=${encodeURIComponent(name)}&lang=${language}`)
-      .then((response) => response.json())
-      .then((data: { questions: FillQuestion[] }) => {
-        setQuestions(data.questions);
-        setMessages((current) => [...current, { role: 'assistant', content: data.questions[0].label }]);
-      });
-  }, [language, t]);
-
-  async function completeFill(nextAnswers: Partial<Record<FillQuestion['id'], string>>) {
-    setLoading(true);
-    const response = await fetch('/api/fill/chat', {
+    setDialogState('INIT');
+    
+    fetch('/api/fill/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ answers: nextAnswers, language }),
+      body: JSON.stringify({
+        sessionId,
+        message: '你好，我进入网站了', 
+        language: language === 'zh' ? 'zh_CN' : 'en_US'
+      })
+    })
+    .then((res) => res.json())
+    .then((data) => {
+      if (data.reply) {
+        setMessages([{ role: 'assistant', content: data.reply }]);
+        setDialogState(data.newState || 'INIT');
+      }
     });
-    const payload = await response.json();
-    setRecord(payload.record);
-    setMessages((current) => [...current, { role: 'assistant', content: payload.reply }]);
-    setLoading(false);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [language]);
 
   async function answerCurrentQuestion(value: string) {
-    if (!currentQuestion || !value.trim() || loading) return;
+    if (!value.trim() || loading || completed) return;
+    
     const answer = value.trim();
-    const nextAnswers = { ...answers, [currentQuestion.id]: answer };
-    const nextIndex = questionIndex + 1;
-
-    setAnswers(nextAnswers);
     setMessages((current) => [...current, { role: 'user', content: answer }]);
     setInput('');
+    setLoading(true);
 
-    if (nextIndex < questions.length) {
-      setQuestionIndex(nextIndex);
-      setMessages((current) => [...current, { role: 'assistant', content: questions[nextIndex].label }]);
-      return;
+    try {
+      const response = await fetch('/api/fill/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          sessionId, 
+          message: answer, 
+          language: language === 'zh' ? 'zh_CN' : 'en_US' 
+        }),
+      });
+      
+      const payload = await response.json();
+      
+      if (payload.reply) {
+        setMessages((current) => [...current, { role: 'assistant', content: payload.reply }]);
+        speak(payload.reply, language);
+      }
+      if (payload.extractedData) {
+        setRecord(payload.extractedData);
+      }
+      if (payload.newState) {
+        setDialogState(payload.newState);
+      }
+    } catch (error) {
+      console.error('Chat error:', error);
+    } finally {
+      setLoading(false);
     }
-
-    await completeFill(nextAnswers);
   }
 
   async function explainResult() {
@@ -145,7 +128,7 @@ export function FillClient() {
           <div className="wa-avatar">F</div>
           <div>
             <strong>{t({ en: 'Fill Chatbot', zh: '填写聊天助手' })}</strong>
-            <span>{t({ en: 'Answer 3 questions by tap, typing, or voice', zh: '用点击、输入或语音回答 3 个问题' })}</span>
+            <span>{t({ en: 'Talk with assistant to fill forms', zh: '和助手对话来填写表格' })}</span>
           </div>
         </div>
 
@@ -155,24 +138,16 @@ export function FillClient() {
               {message.content}
             </div>
           ))}
-          {currentQuestion && !completed ? (
-            <div className="quick-options">
-              {currentQuestion.options.map((option) => (
-                <button className="chip-button" key={option} type="button" onClick={() => answerCurrentQuestion(option)}>
-                  {option}
-                </button>
-              ))}
-            </div>
-          ) : null}
-          {loading ? <div className="wa-bubble">{t({ en: 'Preparing result...', zh: '正在准备结果...' })}</div> : null}
+          {/* Delete old version static option button */}
+          {loading ? <div className="wa-bubble">{t({ en: 'Typing...', zh: '正在输入...' })}</div> : null}
         </div>
 
         <VoiceComposer
           value={input}
           onChange={setInput}
           onSubmit={() => answerCurrentQuestion(input)}
-          placeholder={currentQuestion ? t({ en: 'Type or speak your answer', zh: '输入或说出您的答案' }) : t({ en: 'Result is ready', zh: '结果已准备好' })}
-          disabled={!currentQuestion || completed || loading}
+          placeholder={completed ? t({ en: 'Completed', zh: '已完成' }) : t({ en: 'Type or speak your answer', zh: '输入或说出您的答案' })}
+          disabled={completed || loading}
           languageCode={language === 'zh' ? 'zh-CN' : 'en-US'}
         />
       </section>
@@ -193,12 +168,14 @@ export function FillClient() {
           ) : null}
         </div>
 
-        {completed ? (
+        {Object.keys(record).length > 0 ? (
           <>
-            <div className="result-success">
-              <CheckCircle2 size={20} />
-              {t({ en: 'Result filled', zh: '结果已填写' })}
-            </div>
+            {completed && (
+              <div className="result-success">
+                <CheckCircle2 size={20} />
+                {t({ en: 'Result filled', zh: '结果已填写完毕' })}
+              </div>
+            )}
             <div className="table-wrap">
               <table>
                 <tbody>
@@ -221,7 +198,7 @@ export function FillClient() {
             ) : null}
           </>
         ) : (
-          <div className="empty-state">{t({ en: 'The filled result will appear here after 3 answers.', zh: '回答 3 个问题后，填写结果会显示在这里。' })}</div>
+          <div className="empty-state">{t({ en: 'The filled result will appear here.', zh: '填写结果会显示在这里。' })}</div>
         )}
       </aside>
     </div>

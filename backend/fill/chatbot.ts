@@ -169,7 +169,7 @@ export async function processUserMessage(
     // Extract phone from sessionId (format: session_<phone>_<timestamp>)
     const phoneMatch = sessionId.match(/session_(.+)_\d+/);
     const phone = phoneMatch?.[1] || 'unknown';
-    session = await SessionManager.createSession(phone, language);
+    session = await SessionManager.createSession(phone, language, sessionId);
   }
 
   // Get message history for AI context

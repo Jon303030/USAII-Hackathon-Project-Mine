@@ -24,10 +24,10 @@ export class SessionManager {
   /**
    * Create new session
    */
-  static async createSession(phone: string, language: Language = 'zh_CN'): Promise<UserSession> {
+  static async createSession(phone: string, language: Language = 'zh_CN', customSessionId?: string): Promise<UserSession> {
     await ensureSessionsDir();
 
-    const sessionId = `session_${phone}_${Date.now()}`;
+    const sessionId = customSessionId || `session_${phone}_${Date.now()}`;
     const session: UserSession = {
       sessionId,
       phone,
@@ -268,12 +268,37 @@ export class SessionManager {
  * Get session context info (for Gemini prompt)
  */
 export function getSessionContext(session: UserSession): Record<string, any> {
+  const requiredFields = ['name', 'age', 'maritalStatus', 'childrenCount', 'annualIncome'];
+  const missingFields = requiredFields.filter(
+    field => !session.collectedData || !session.collectedData[field]
+  );
+
+  const formInfoMap: Record<Language, string> = {
+    zh_CN: "马来西亚乐龄人士生活援助金 (Bantuan Warga Emas)。申请条件：必须是60岁以上的马来西亚公民，家庭总收入每月低于3000令吉，且没有固定的退休金收入。",
+    ms_MY: "Bantuan Warga Emas (BWE). Syarat permohonan: Warganegara Malaysia berumur 60 tahun ke atas, jumlah pendapatan isi rumah di bawah RM3,000 sebulan, dan tiada pendapatan pencen tetap.",
+    en_US: "Assistance for Older Persons (Bantuan Warga Emas). Requirements: Malaysian citizen aged 60 and above, total household income below RM3,000 per month, and no fixed pension income."
+  };
+
+  const disclaimersMap: Record<Language, string> = {
+    zh_CN: "本人在此声明，以上提供的所有信息均真实有效。如有虚假，政府有权撤销援助资格。本信息仅用于援助金申请，将严格保密。",
+    ms_MY: "Saya dengan ini mengaku bahawa semua maklumat yang diberikan adalah benar. Jika palsu, kerajaan berhak membatalkan kelayakan. Maklumat ini hanya untuk permohonan bantuan dan akan dirahsiakan dengan ketat.",
+    en_US: "I hereby declare that all information provided is true and valid. If false, the government reserves the right to revoke eligibility. This information is solely for the aid application and will be kept strictly confidential."
+  };
+
+  const currentLang = session.language || 'en_US';
+
   return {
     phone: session.phone,
     language: session.language,
     state: session.state,
+
     profile_json: JSON.stringify(session.userProfile, null, 2),
     collected_fields_json: JSON.stringify(session.collectedData, null, 2),
+
+    form_info: formInfoMap[currentLang as Language],
+    missing_fields_json: JSON.stringify(missingFields),
+    disclaimers: disclaimersMap[currentLang as Language],
+    
     messages_count: session.messages.length,
     time_spent: Date.now() - session.createdAt,
   };

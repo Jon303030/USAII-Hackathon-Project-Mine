@@ -244,6 +244,12 @@ Form Disclaimers:
 4. If no, politely say "No problem, hope we can help later"`,
 };
 
+export const COMPLETED_PROMPTS: Record<Language, string> = {
+  zh_CN: `流程已结束。请温柔地告诉用户所有资料都已经登记完毕，志愿者很快会通过短信或电话联系他们。不要再问任何新问题。`,
+  ms_MY: `Proses telah selesai. Beritahu pengguna dengan lembut bahawa semua maklumat telah didaftarkan dan sukarelawan akan menghubungi mereka tidak lama lagi. Jangan tanya soalan baru.`,
+  en_US: `Process is complete. Gently tell the user that all information is registered and a volunteer will contact them soon. Do not ask any new questions.`,
+};
+
 /**
  * 生成上下文特定的 Prompt
  */
@@ -258,6 +264,7 @@ export function generateContextPrompt(
     FORM_EXPLANATION: FORM_EXPLANATION_PROMPTS,
     FORM_FILLING: FIELD_FILLING_PROMPTS,
     CONFIRM_TERMS: TERMS_CONFIRMATION_PROMPTS,
+    COMPLETED: COMPLETED_PROMPTS,
   };
 
   let template = templates[state]?.[language] || templates.GATHER_PROFILE[language];

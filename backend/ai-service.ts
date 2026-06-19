@@ -53,22 +53,16 @@ export class GeminiAIService {
       const systemPrompt = SYSTEM_PROMPTS[language];
       const stateContextPrompt = generateContextPrompt(state, language, context);
       const fullSystemPrompt = `${systemPrompt}\n\n${stateContextPrompt}`;
-
-      // Build request body
       const requestBody = {
         contents: [
           {
             role: 'user',
-            parts: [
-              {
-                text: fullSystemPrompt,
-              },
-              ...messages.map((msg) => ({
-                role: msg.role === 'model' ? 'model' : 'user',
-                parts: msg.parts,
-              })),
-            ],
+            parts: [{ text: fullSystemPrompt }],
           },
+          ...messages.map((msg) => ({
+            role: msg.role === 'model' ? 'model' : 'user',
+            parts: msg.parts,
+          })),
         ],
         generationConfig: {
           responseMimeType: 'application/json',
@@ -87,7 +81,6 @@ export class GeminiAIService {
         },
       };
 
-      // Send request to Gemini API
       const response = await fetch(`${GEMINI_API_URL}?key=${this.apiKey}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -135,15 +128,12 @@ export class GeminiAIService {
       const systemPrompt = SYSTEM_PROMPTS[language];
       const stateContextPrompt = generateContextPrompt(state, language, context);
       const fullSystemPrompt = `${systemPrompt}\n\n${stateContextPrompt}\n\nFirst transcribe the user's speech into text, then process according to the rules.`;
-
       const requestBody = {
         contents: [
           {
             role: 'user',
             parts: [
-              {
-                text: fullSystemPrompt,
-              },
+              { text: fullSystemPrompt },
               {
                 inlineData: {
                   mimeType,
