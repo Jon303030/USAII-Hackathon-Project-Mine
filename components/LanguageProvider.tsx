@@ -70,8 +70,8 @@ function LanguageGate({ onChoose }: { onChoose: (language: AppLanguage) => void 
         </span>
         <div>
           <h2 id="language-gate-title">请选择语言 / Choose Language</h2>
-          <p>网站会用您选择的语言显示。之后也可以在右上角更改。</p>
-          <p>The website will use your selected language. You can change it later from the top right.</p>
+          <p>网站会用您选择的语言显示。您也可以在聊天界面右上角更改。</p>
+          <p>The website will use your selected language. You can also change it from the chat header.</p>
         </div>
         <div className="language-gate-actions">
           <button className="btn primary" type="button" onClick={() => onChoose('zh')}>

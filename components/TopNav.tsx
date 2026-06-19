@@ -1,44 +1,71 @@
 'use client';
 
 import Link from 'next/link';
-import { FileEdit, Heart, Home, Search, SquareStack, Users } from 'lucide-react';
+import { usePathname } from 'next/navigation';
+import { FileEdit, Heart, Search, SquareStack, Users } from 'lucide-react';
 import { LanguageSwitch, useLanguage } from './LanguageProvider';
 import { ThemeToggle } from './ThemeToggle';
 
+const modules = [
+  {
+    href: '/assistant',
+    title: { en: 'Assistant', zh: '助手' },
+    fullTitle: { en: 'Senior application assistant', zh: '长者申请助手' },
+    icon: Heart,
+  },
+  {
+    href: '/fill',
+    title: { en: 'Form Fill', zh: '填写表格' },
+    fullTitle: { en: 'Fill workflow', zh: '填写流程' },
+    icon: FileEdit,
+  },
+  {
+    href: '/navigate',
+    title: { en: 'Navigator', zh: '找表格' },
+    fullTitle: { en: 'Navigate workflow', zh: '寻找表格流程' },
+    icon: Search,
+  },
+  {
+    href: '/view',
+    title: { en: 'Form Viewer', zh: '查看表格' },
+    fullTitle: { en: 'View workflow', zh: '查看表格流程' },
+    icon: SquareStack,
+  },
+  {
+    href: '/user-management',
+    title: { en: 'Users', zh: '用户' },
+    fullTitle: { en: 'User management', zh: '用户管理' },
+    icon: Users,
+  },
+] as const;
+
 export function TopNav() {
   const { t } = useLanguage();
+  const pathname = usePathname();
 
   return (
     <header className="topbar">
-      <Link className="brand" href="/">
+      <Link className="brand" href="/assistant" title={t({ en: 'Senior application assistant', zh: '长者申请助手' })}>
         <span className="brand-mark">RW</span>
         <span>{t({ en: 'Report Workflow', zh: '申请流程助手' })}</span>
       </Link>
-      <nav className="nav" aria-label={t({ en: 'Primary navigation', zh: '主要导航' })}>
-        <Link href="/" title={t({ en: 'Main page', zh: '首页' })}>
-          <Home size={17} />
-          {t({ en: 'Main', zh: '首页' })}
-        </Link>
-        <Link href="/assistant" title={t({ en: 'Senior application assistant', zh: '长者申请助手' })}>
-          <Heart size={17} />
-          {t({ en: 'Assistant', zh: '助手' })}
-        </Link>
-        <Link href="/fill" title={t({ en: 'Fill workflow', zh: '填写流程' })}>
-          <FileEdit size={17} />
-          {t({ en: 'Form Fill', zh: '填写表格' })}
-        </Link>
-        <Link href="/navigate" title={t({ en: 'Navigate workflow', zh: '寻找表格流程' })}>
-          <Search size={17} />
-          {t({ en: 'Navigator', zh: '找表格' })}
-        </Link>
-        <Link href="/view" title={t({ en: 'View workflow', zh: '查看表格流程' })}>
-          <SquareStack size={17} />
-          {t({ en: 'Form Viewer', zh: '查看表格' })}
-        </Link>
-        <Link href="/user-management" title={t({ en: 'User management', zh: '用户管理' })}>
-          <Users size={17} />
-          {t({ en: 'Users', zh: '用户' })}
-        </Link>
+      <nav className="nav" aria-label={t({ en: 'Page switcher', zh: '页面切换' })}>
+        {modules.map((item) => {
+          const Icon = item.icon;
+          const active = pathname === item.href;
+          return (
+            <Link
+              className={active ? 'active' : ''}
+              href={item.href}
+              key={item.href}
+              title={t(item.fullTitle)}
+              aria-current={active ? 'page' : undefined}
+            >
+              <Icon size={17} />
+              {t(item.title)}
+            </Link>
+          );
+        })}
         <LanguageSwitch />
         <ThemeToggle />
       </nav>

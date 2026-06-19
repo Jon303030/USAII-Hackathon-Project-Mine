@@ -4,21 +4,27 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ClipboardCheck,
-  FileText,
+  HelpCircle,
   Languages,
   Pencil,
-  Phone,
-  Search,
-  ShieldCheck,
-  UserRound,
 } from 'lucide-react';
 import { VoiceComposer } from '@/components/VoiceComposer';
 import { useLanguage } from '@/components/LanguageProvider';
 import type { ApplicantProfile, ApplicationSection, AssistantLanguage, EligibilityStatus } from '@/backend/elderly/forms';
 
+type QuickOption = {
+  label: string;
+  storedValue?: string;
+};
+
+type MessageWidget = 'consent' | 'review' | 'completion' | 'forms';
+
 type Message = {
   role: 'assistant' | 'user';
   content: string;
+  quickOptions?: QuickOption[];
+  widget?: MessageWidget;
+  allowAsk?: boolean;
 };
 
 type Phase =
@@ -187,6 +193,18 @@ const text = {
   placeholder: {
     en: 'Type or speak your answer',
     zh: '输入或说出您的答案',
+  },
+  askPrompt: {
+    en: 'What would you like to ask?',
+    zh: '请问您想了解什么？',
+  },
+  askButton: {
+    en: 'Ask a question',
+    zh: '提问',
+  },
+  askingMode: {
+    en: 'Ask your question below, then press send.',
+    zh: '请在下方输入您的问题，然后按发送。',
   },
   disabledPlaceholder: {
     en: 'This step uses buttons on the screen',
@@ -376,6 +394,43 @@ function statusLabel(status: EligibilityStatus, language: AssistantLanguage) {
   return language === 'zh' ? '可能不符合' : 'Less likely';
 }
 
+function buildProfileOptions(question: ProfileQuestion | undefined, language: AssistantLanguage): QuickOption[] | undefined {
+  if (!question?.options) return undefined;
+  return question.options.map((option) => ({
+    label: pick(language, option.label),
+    storedValue: option.value,
+  }));
+}
+
+function buildYesNoOptions(language: AssistantLanguage): QuickOption[] {
+  return [
+    { label: language === 'zh' ? '是' : 'Yes', storedValue: 'yes' },
+    { label: language === 'zh' ? '不是' : 'No', storedValue: 'no' },
+  ];
+}
+
+function buildAddressPartOptions(language: AssistantLanguage): QuickOption[] {
+  return addressParts.map((part) => ({
+    label: pick(language, part.label),
+    storedValue: part.id,
+  }));
+}
+
+function buildFormOptions(results: SearchResult[]): QuickOption[] {
+  return results.map((result, index) => ({
+    label: `${index + 1}. ${result.form.title}`,
+    storedValue: String(index + 1),
+  }));
+}
+
+function buildApplicationFieldOptions(field: LocalizedField | null): QuickOption[] | undefined {
+  if (!field?.options) return undefined;
+  return field.options.map((option) => ({
+    label: option.label,
+    storedValue: option.label,
+  }));
+}
+
 export function ElderlyAssistantClient() {
   const { chooseLanguage, hasChosenLanguage, language } = useLanguage();
   const initializedRef = useRef(false);
@@ -396,6 +451,9 @@ export function ElderlyAssistantClient() {
   const [application, setApplication] = useState<ApplicationPackage | null>(null);
   const [consents, setConsents] = useState<boolean[]>([]);
   const [smsQueued, setSmsQueued] = useState(false);
+  const [questionMode, setQuestionMode] = useState(false);
+  const [askingAboutMessage, setAskingAboutMessage] = useState('');
+  const [aiMode, setAiMode] = useState<boolean | null>(null);
 
   const currentQuestion = profileQuestions[questionIndex];
   const currentApplicationField = selectedResult?.form.requiredFields.find((field) => field.id === currentApplicationFieldId) ?? null;
@@ -403,7 +461,89 @@ export function ElderlyAssistantClient() {
   const allConsentsAccepted = consents.length > 0 && consents.every(Boolean);
 
   useEffect(() => {
-    if (!hasChosenLanguage) return;
+    fetch('/api/elderly/ai-status')
+      .then((response) => response.json())
+      .then((data: { aiEnabled?: boolean }) => setAiMode(Boolean(data.aiEnabled)))
+      .catch(() => setAiMode(false));
+  }, []);
+
+  function applyAiChatResponse(data: {
+    error?: string;
+    reply?: string;
+    profile?: ApplicantProfile;
+    phase?: Phase;
+    questionIndex?: number;
+    quickOptions?: QuickOption[];
+    widget?: MessageWidget;
+    results?: SearchResult[];
+    selectedFormId?: string | null;
+    extraAnswers?: Record<string, string>;
+    currentApplicationFieldId?: string | null;
+    application?: ApplicationPackage | null;
+    consents?: boolean[];
+    shouldSpeak?: boolean;
+  }) {
+    if (data.error) {
+      addAssistant(data.error, { allowAsk: false });
+      return;
+    }
+
+    if (data.profile) setProfile(data.profile);
+    if (data.phase) setPhase(data.phase);
+    if (typeof data.questionIndex === 'number') setQuestionIndex(data.questionIndex);
+    if (data.results) setResults(data.results);
+    if (data.selectedFormId !== undefined) {
+      const nextResults = data.results ?? results;
+      setSelectedResult(nextResults.find((result) => result.form.id === data.selectedFormId) ?? nextResults[0] ?? null);
+    }
+    if (data.extraAnswers) setExtraAnswers(data.extraAnswers);
+    if (data.currentApplicationFieldId !== undefined) setCurrentApplicationFieldId(data.currentApplicationFieldId);
+    if (data.application !== undefined) setApplication(data.application);
+    if (data.consents) setConsents(data.consents);
+
+    if (data.reply) {
+      addAssistant(data.reply, {
+        shouldSpeak: data.shouldSpeak,
+        quickOptions: data.quickOptions,
+        widget: data.widget,
+      });
+    }
+  }
+
+  async function callAiChat(action: 'init' | 'message', userMessage?: string) {
+    setLoading(true);
+    try {
+      const response = await fetch('/api/elderly/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action,
+          userMessage,
+          language,
+          phase,
+          profile,
+          questionIndex,
+          messages,
+          results,
+          selectedFormId: selectedResult?.form.id ?? null,
+          extraAnswers,
+          currentApplicationFieldId,
+          consents,
+        }),
+      });
+      const data = await response.json();
+      applyAiChatResponse(data);
+    } catch {
+      addAssistant(language === 'zh' ? 'AI 暂时无法回应，请稍后再试。' : 'AI is temporarily unavailable. Please try again.', {
+        allowAsk: false,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!hasChosenLanguage || aiMode === null) return;
     if (initializedRef.current && previousLanguageRef.current === language) return;
     initializedRef.current = true;
     previousLanguageRef.current = language;
@@ -422,24 +562,30 @@ export function ElderlyAssistantClient() {
     setApplication(null);
     setConsents([]);
     setSmsQueued(false);
+    setQuestionMode(false);
+    setAskingAboutMessage('');
+
+    if (aiMode) {
+      setMessages([]);
+      void callAiChat('init');
+      return;
+    }
+
     setMessages([
-      { role: 'assistant', content: text.greeting[language] },
-      { role: 'assistant', content: pick(language, profileQuestions[0].question) },
+      {
+        role: 'assistant',
+        content: text.greeting[language],
+        allowAsk: true,
+      },
+      {
+        role: 'assistant',
+        content: pick(language, profileQuestions[0].question),
+        allowAsk: true,
+        quickOptions: buildProfileOptions(profileQuestions[0], language),
+      },
     ]);
     speak(`${text.greeting[language]} ${pick(language, profileQuestions[0].question)}`, language);
-  }, [hasChosenLanguage, language]);
-
-  const profileRows = useMemo(
-    () =>
-      profileQuestions
-        .filter((question) => profile[question.id])
-        .map((question) => ({
-          id: question.id,
-          label: pick(language, question.label),
-          value: profile[question.id] ?? '',
-        })),
-    [language, profile],
-  );
+  }, [hasChosenLanguage, language, aiMode]);
 
   const groupedFields = useMemo(() => {
     const groups: Record<ApplicationSection, ApplicationPackage['fields']> = {
@@ -453,8 +599,27 @@ export function ElderlyAssistantClient() {
     return groups;
   }, [application]);
 
-  function addAssistant(content: string, shouldSpeak = false, speechLanguage = language) {
-    setMessages((current) => [...current, { role: 'assistant', content }]);
+  function addAssistant(
+    content: string,
+    options: {
+      shouldSpeak?: boolean;
+      speechLanguage?: AssistantLanguage;
+      quickOptions?: QuickOption[];
+      widget?: MessageWidget;
+      allowAsk?: boolean;
+    } = {},
+  ) {
+    const { shouldSpeak = false, speechLanguage = language, quickOptions, widget, allowAsk = true } = options;
+    setMessages((current) => [
+      ...current,
+      {
+        role: 'assistant',
+        content,
+        quickOptions,
+        widget,
+        allowAsk,
+      },
+    ]);
     if (shouldSpeak) speak(content, speechLanguage);
   }
 
@@ -467,15 +632,24 @@ export function ElderlyAssistantClient() {
     if (!question) return;
     setQuestionIndex(index);
     setPhase('collect');
-    addAssistant(spell && question.id === 'name' ? text.spellName[nextLanguage] : pick(nextLanguage, question.question), true, nextLanguage);
+    addAssistant(spell && question.id === 'name' ? text.spellName[nextLanguage] : pick(nextLanguage, question.question), {
+      shouldSpeak: true,
+      speechLanguage: nextLanguage,
+      quickOptions: buildProfileOptions(question, nextLanguage),
+    });
   }
 
   function selectLanguage(nextLanguage: AssistantLanguage) {
     chooseLanguage(nextLanguage);
     setPhase('collect');
     setMessages([
-      { role: 'assistant', content: text.greeting[nextLanguage] },
-      { role: 'assistant', content: pick(nextLanguage, profileQuestions[0].question) },
+      { role: 'assistant', content: text.greeting[nextLanguage], allowAsk: true },
+      {
+        role: 'assistant',
+        content: pick(nextLanguage, profileQuestions[0].question),
+        allowAsk: true,
+        quickOptions: buildProfileOptions(profileQuestions[0], nextLanguage),
+      },
     ]);
     speak(`${text.greeting[nextLanguage]} ${pick(nextLanguage, profileQuestions[0].question)}`, nextLanguage);
   }
@@ -486,7 +660,10 @@ export function ElderlyAssistantClient() {
       return;
     }
     chooseLanguage(nextLanguage);
-    addAssistant(nextLanguage === 'zh' ? '已切换到华文。' : 'Switched to English.', false, nextLanguage);
+    addAssistant(nextLanguage === 'zh' ? '已切换到华文。' : 'Switched to English.', {
+      speechLanguage: nextLanguage,
+      allowAsk: false,
+    });
   }
 
   function continueAfterProfileQuestion(index: number, nextProfile: ApplicantProfile) {
@@ -506,19 +683,28 @@ export function ElderlyAssistantClient() {
     if (addressCorrectionId) {
       setAddressCorrectionId(null);
       setPhase('confirmAddress');
-      addAssistant(fillTemplate(text.addressConfirm[language], { value: formatAddress(nextProfile) }), true);
+      addAssistant(fillTemplate(text.addressConfirm[language], { value: formatAddress(nextProfile) }), {
+        shouldSpeak: true,
+        quickOptions: buildYesNoOptions(language),
+      });
       return;
     }
 
     if (currentQuestion.id === 'name') {
       setPhase('confirmName');
-      addAssistant(fillTemplate(text.nameConfirm[language], { value }), true);
+      addAssistant(fillTemplate(text.nameConfirm[language], { value }), {
+        shouldSpeak: true,
+        quickOptions: buildYesNoOptions(language),
+      });
       return;
     }
 
     if (currentQuestion.id === 'addressLine') {
       setPhase('confirmAddress');
-      addAssistant(fillTemplate(text.addressConfirm[language], { value: formatAddress(nextProfile) }), true);
+      addAssistant(fillTemplate(text.addressConfirm[language], { value: formatAddress(nextProfile) }), {
+        shouldSpeak: true,
+        quickOptions: buildYesNoOptions(language),
+      });
       return;
     }
 
@@ -542,7 +728,10 @@ export function ElderlyAssistantClient() {
       return;
     }
     setPhase('addressFix');
-    addAssistant(text.addressFix[language], true);
+    addAssistant(text.addressFix[language], {
+      shouldSpeak: true,
+      quickOptions: buildAddressPartOptions(language),
+    });
   }
 
   function chooseAddressPart(value: string) {
@@ -552,7 +741,7 @@ export function ElderlyAssistantClient() {
       addressParts.find((part) => normalized.includes(part.id.toLowerCase()) || normalized.includes(pick(language, part.label).toLowerCase()));
 
     if (!selected) {
-      addAssistant(text.addressFix[language]);
+      addAssistant(text.addressFix[language], { quickOptions: buildAddressPartOptions(language) });
       return;
     }
 
@@ -565,7 +754,7 @@ export function ElderlyAssistantClient() {
   async function searchForms(nextProfile: ApplicantProfile) {
     setLoading(true);
     setPhase('searching');
-    addAssistant(text.searching[language], true);
+    addAssistant(text.searching[language], { shouldSpeak: true, allowAsk: false });
     const response = await fetch('/api/elderly/forms/search', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -578,7 +767,11 @@ export function ElderlyAssistantClient() {
     setLoading(false);
     addAssistant(
       data.results.length > 0 ? fillTemplate(text.foundForms[language], { count: data.results.length }) : text.noForm[language],
-      true,
+      {
+        shouldSpeak: true,
+        quickOptions: data.results.length > 0 ? buildFormOptions(data.results) : undefined,
+        widget: data.results.length > 0 ? 'forms' : undefined,
+      },
     );
   }
 
@@ -590,8 +783,8 @@ export function ElderlyAssistantClient() {
     setCurrentApplicationFieldId(null);
     setEditingApplicationFieldId(null);
     setConsents(new Array(result.form.consentItems.length).fill(false));
-    addAssistant(`${result.form.title}: ${result.form.simpleExplanation}`, true);
-    addAssistant(text.continueAsk[language], true);
+    addAssistant(`${result.form.title}: ${result.form.simpleExplanation}`, { shouldSpeak: true });
+    addAssistant(text.continueAsk[language], { shouldSpeak: true, quickOptions: buildYesNoOptions(language) });
   }
 
   function selectFormFromText(value: string) {
@@ -605,7 +798,10 @@ export function ElderlyAssistantClient() {
     const result = titleMatch ?? results[index];
 
     if (!result) {
-      addAssistant(fillTemplate(text.foundForms[language], { count: results.length }));
+      addAssistant(fillTemplate(text.foundForms[language], { count: results.length }), {
+        quickOptions: buildFormOptions(results),
+        widget: 'forms',
+      });
       return;
     }
 
@@ -626,7 +822,10 @@ export function ElderlyAssistantClient() {
     }
     setPhase('apply');
     setCurrentApplicationFieldId(nextField.id);
-    addAssistant(nextField.question, true);
+    addAssistant(nextField.question, {
+      shouldSpeak: true,
+      quickOptions: buildApplicationFieldOptions(nextField),
+    });
   }
 
   async function buildReview(answers: Record<string, string>, nextConsents = consents) {
@@ -647,8 +846,8 @@ export function ElderlyAssistantClient() {
     setApplication(data.application);
     setPhase('review');
     setLoading(false);
-    addAssistant(text.reviewReady[language], true);
-    addAssistant(text.reviewConfirm[language]);
+    addAssistant(text.reviewReady[language], { shouldSpeak: true, widget: 'review' });
+    addAssistant(text.reviewConfirm[language], { quickOptions: buildYesNoOptions(language) });
   }
 
   function answerApplicationField(value: string) {
@@ -669,7 +868,10 @@ export function ElderlyAssistantClient() {
     }
 
     setCurrentApplicationFieldId(nextField.id);
-    addAssistant(nextField.question, true);
+    addAssistant(nextField.question, {
+      shouldSpeak: true,
+      quickOptions: buildApplicationFieldOptions(nextField),
+    });
   }
 
   function editApplicationField(fieldId: string) {
@@ -678,17 +880,20 @@ export function ElderlyAssistantClient() {
     setEditingApplicationFieldId(fieldId);
     setCurrentApplicationFieldId(fieldId);
     setPhase('apply');
-    addAssistant(field.question, true);
+    addAssistant(field.question, {
+      shouldSpeak: true,
+      quickOptions: buildApplicationFieldOptions(field),
+    });
   }
 
   function startConsent() {
     setPhase('consent');
-    addAssistant(text.consentIntro[language], true);
+    addAssistant(text.consentIntro[language], { shouldSpeak: true, widget: 'consent' });
   }
 
   async function completeApplication() {
     if (!allConsentsAccepted) {
-      addAssistant(text.consentNeed[language], true);
+      addAssistant(text.consentNeed[language], { shouldSpeak: true });
       return;
     }
     if (!selectedResult) return;
@@ -708,12 +913,78 @@ export function ElderlyAssistantClient() {
     setApplication(data.application);
     setPhase('complete');
     setLoading(false);
-    addAssistant(text.complete[language], true);
+    addAssistant(text.complete[language], {
+      shouldSpeak: true,
+      widget: 'completion',
+      quickOptions: [
+        {
+          label: language === 'zh' ? '排队短信' : 'Queue SMS',
+          storedValue: 'queue-sms',
+        },
+      ],
+    });
+  }
+
+  async function submitQuestion(question: string) {
+    const trimmed = question.trim();
+    if (!trimmed || loading) return;
+    setQuestionMode(false);
+    addUser(trimmed);
+    setInput('');
+    setLoading(true);
+
+    const response = await fetch('/api/elderly/ask', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question: trimmed,
+        language,
+        phase,
+        lastAssistantMessage: askingAboutMessage,
+        profile,
+      }),
+    });
+    const data = (await response.json()) as { answer?: string; error?: string };
+    setLoading(false);
+    if (data.error) {
+      addAssistant(data.error, { allowAsk: false });
+      setAskingAboutMessage('');
+      return;
+    }
+    addAssistant(data.answer ?? text.askingMode[language], { allowAsk: false });
+    setAskingAboutMessage('');
+  }
+
+  function startQuestionMode(relatedMessage: string) {
+    setQuestionMode(true);
+    setAskingAboutMessage(relatedMessage);
+    addAssistant(text.askingMode[language], { allowAsk: false });
   }
 
   function submitAnswer(displayValue: string, storedValue = displayValue) {
     const answer = storedValue.trim();
     if (!answer || loading) return;
+
+    if (questionMode) {
+      void submitQuestion(answer);
+      return;
+    }
+
+    if (answer === 'queue-sms') {
+      setSmsQueued(true);
+      addUser(displayValue.trim());
+      setInput('');
+      addAssistant(text.smsQueued[language], { shouldSpeak: true, allowAsk: false });
+      return;
+    }
+
+    if (aiMode) {
+      addUser(displayValue.trim());
+      setInput('');
+      void callAiChat('message', answer);
+      return;
+    }
+
     addUser(displayValue.trim());
     setInput('');
 
@@ -730,14 +1001,14 @@ export function ElderlyAssistantClient() {
     if (phase === 'confirmName') {
       if (isNegative(answer)) confirmName(false);
       else if (isAffirmative(answer)) confirmName(true);
-      else addAssistant(text.answerAgain[language]);
+      else addAssistant(text.answerAgain[language], { quickOptions: buildYesNoOptions(language) });
       return;
     }
 
     if (phase === 'confirmAddress') {
       if (isNegative(answer)) confirmAddress(false);
       else if (isAffirmative(answer)) confirmAddress(true);
-      else addAssistant(text.answerAgain[language]);
+      else addAssistant(text.answerAgain[language], { quickOptions: buildYesNoOptions(language) });
       return;
     }
 
@@ -754,9 +1025,13 @@ export function ElderlyAssistantClient() {
     if (phase === 'explain') {
       if (isNegative(answer)) {
         setPhase('forms');
-        addAssistant(text.chooseAgain[language], true);
+        addAssistant(text.chooseAgain[language], {
+          shouldSpeak: true,
+          quickOptions: buildFormOptions(results),
+          widget: 'forms',
+        });
       } else if (isAffirmative(answer)) startApplication();
-      else addAssistant(text.answerAgain[language]);
+      else addAssistant(text.answerAgain[language], { quickOptions: buildYesNoOptions(language) });
       return;
     }
 
@@ -766,16 +1041,22 @@ export function ElderlyAssistantClient() {
     }
 
     if (phase === 'review') {
-      if (isNegative(answer)) addAssistant(text.reviewReady[language]);
+      if (isNegative(answer)) addAssistant(text.reviewReady[language], { widget: 'review' });
       else if (isAffirmative(answer)) startConsent();
-      else addAssistant(text.reviewReady[language]);
+      else addAssistant(text.reviewReady[language], { widget: 'review', quickOptions: buildYesNoOptions(language) });
       return;
     }
 
     if (phase === 'consent') {
-      if (isNegative(answer)) addAssistant(text.consentNeed[language]);
+      if (isNegative(answer)) addAssistant(text.consentNeed[language], { widget: 'consent' });
       else if (isAffirmative(answer)) void completeApplication();
-      else addAssistant(text.consentNeed[language]);
+      else addAssistant(text.consentNeed[language], { widget: 'consent' });
+      return;
+    }
+
+    if (phase === 'complete' && answer === 'queue-sms') {
+      setSmsQueued(true);
+      addAssistant(text.smsQueued[language], { shouldSpeak: true, allowAsk: false });
     }
   }
 
@@ -796,109 +1077,54 @@ export function ElderlyAssistantClient() {
     setPhase('consent');
   }
 
-  function renderQuickOptions() {
-    if (phase === 'language') {
-      return (
-        <div className="quick-options">
-          <button className="chip-button" type="button" onClick={() => selectLanguage('zh')}>
-            华文
-          </button>
-          <button className="chip-button" type="button" onClick={() => selectLanguage('en')}>
-            English
-          </button>
-        </div>
-      );
-    }
-
-    if (phase === 'collect' && currentQuestion?.options) {
-      return (
-        <div className="quick-options">
-          {currentQuestion.options.map((option) => (
-            <button className="chip-button" key={option.value} type="button" onClick={() => submitAnswer(pick(language, option.label), pick(language, option.label))}>
-              {pick(language, option.label)}
-            </button>
-          ))}
-        </div>
-      );
-    }
-
-    if (phase === 'confirmName' || phase === 'confirmAddress' || phase === 'explain' || phase === 'review') {
-      return (
-        <div className="quick-options">
-          <button className="chip-button" type="button" onClick={() => submitAnswer(language === 'zh' ? '是' : 'Yes', 'yes')}>
-            {language === 'zh' ? '是' : 'Yes'}
-          </button>
-          <button className="chip-button" type="button" onClick={() => submitAnswer(language === 'zh' ? '不是' : 'No', 'no')}>
-            {language === 'zh' ? '不是' : 'No'}
-          </button>
-        </div>
-      );
-    }
-
-    if (phase === 'addressFix') {
-      return (
-        <div className="quick-options">
-          {addressParts.map((part) => (
-            <button className="chip-button" key={part.id} type="button" onClick={() => submitAnswer(pick(language, part.label), part.id)}>
-              {pick(language, part.label)}
-            </button>
-          ))}
-        </div>
-      );
-    }
-
-    if (phase === 'forms') {
-      return (
-        <div className="quick-options">
-          {results.map((result, index) => (
-            <button className="chip-button" key={result.form.id} type="button" onClick={() => submitAnswer(`${index + 1}. ${result.form.title}`, String(index + 1))}>
-              {index + 1}. {result.form.title}
-            </button>
-          ))}
-        </div>
-      );
-    }
-
-    if (phase === 'apply' && currentApplicationField?.options) {
-      return (
-        <div className="quick-options">
-          {currentApplicationField.options.map((option) => (
-            <button className="chip-button" key={option.value} type="button" onClick={() => submitAnswer(option.label, option.label)}>
-              {option.label}
-            </button>
-          ))}
-        </div>
-      );
-    }
-
-    if (phase === 'consent') {
-      return (
-        <div className="quick-options">
-          <button className="chip-button" type="button" onClick={() => void completeApplication()}>
-            {language === 'zh' ? '完成申请草稿' : 'Complete draft'}
-          </button>
-        </div>
-      );
-    }
-
-    if (phase === 'complete' && application) {
-      return (
-        <div className="quick-options">
+  function renderMessageOptions(options?: QuickOption[]) {
+    if (!options?.length) return null;
+    return (
+      <div className="quick-options">
+        {options.map((option) => (
           <button
             className="chip-button"
+            key={`${option.label}-${option.storedValue ?? option.label}`}
             type="button"
-            onClick={() => {
-              setSmsQueued(true);
-              addAssistant(text.smsQueued[language], true);
-            }}
+            onClick={() => submitAnswer(option.label, option.storedValue ?? option.label)}
           >
-            {language === 'zh' ? '排队短信' : 'Queue SMS'}
+            {option.label}
           </button>
+        ))}
+      </div>
+    );
+  }
+
+  function renderMessageWidget(widget?: MessageWidget) {
+    if (widget === 'forms') return renderForms();
+    if (widget === 'review') return renderApplicationReview();
+    if (widget === 'consent') return renderConsent();
+    if (widget === 'completion') return renderCompletion();
+    return null;
+  }
+
+  function renderMessageBlock(message: Message, index: number) {
+    if (message.role === 'user') {
+      return (
+        <div className="wa-bubble user" key={`${message.role}-${index}`}>
+          {message.content}
         </div>
       );
     }
 
-    return null;
+    return (
+      <div className="assistant-message-block" key={`${message.role}-${index}`}>
+        <div className="wa-bubble">{message.content}</div>
+        {renderMessageOptions(message.quickOptions)}
+        {renderMessageWidget(message.widget)}
+        {message.allowAsk !== false && phase !== 'complete' ? (
+          <button className="ask-question-btn" type="button" onClick={() => startQuestionMode(message.content)}>
+            <HelpCircle size={16} />
+            {text.askButton[language]}
+          </button>
+        ) : null}
+      </div>
+    );
   }
 
   function renderForms() {
@@ -1023,22 +1249,7 @@ export function ElderlyAssistantClient() {
   );
 
   return (
-    <div className="elderly-workspace">
-      <section className="assistant-hero-panel">
-        <div>
-          <span className="eyebrow">{language === 'zh' ? '长者申请助手' : 'Senior Application Assistant'}</span>
-          <h2>{language === 'zh' ? '用说话、点击和确认来完成申请草稿' : 'Complete an application draft by speaking, tapping, and confirming'}</h2>
-        </div>
-        <div className="language-toggle-large" aria-label={language === 'zh' ? '语言选择' : 'Language selector'}>
-          <button className={language === 'zh' ? 'active' : ''} type="button" onClick={() => changeLanguage('zh')}>
-            华文
-          </button>
-          <button className={language === 'en' ? 'active' : ''} type="button" onClick={() => changeLanguage('en')}>
-            English
-          </button>
-        </div>
-      </section>
-
+    <div className="elderly-workspace chatbot-only">
       <div className="assistant-progress" aria-label="Application progress">
         {phaseSteps.map((step, index) => (
           <div className={`progress-step ${index <= activeStepIndex ? 'active' : ''}`} key={step.id}>
@@ -1048,132 +1259,48 @@ export function ElderlyAssistantClient() {
         ))}
       </div>
 
-      <div className="wa-layout elderly-layout">
-        <section className="wa-chat elder-chat">
-          <div className="wa-chat-header">
-            <div className="wa-avatar">
-              <Languages size={20} />
-            </div>
-            <div>
-              <strong>{language === 'zh' ? '申请助手' : 'Application Assistant'}</strong>
-              <span>{language === 'zh' ? '可用华文或英文回答' : 'Answer in English or Chinese'}</span>
-            </div>
+      <section className="wa-chat elder-chat chatbot-full">
+        <div className="wa-chat-header">
+          <div className="wa-avatar">
+            <Languages size={20} />
           </div>
-
-          <div className="wa-stream">
-            {messages.map((message, index) => (
-              <div className={`wa-bubble ${message.role === 'user' ? 'user' : ''}`} key={`${message.role}-${index}`}>
-                {message.content}
-              </div>
-            ))}
-            {loading ? <div className="wa-bubble">{language === 'zh' ? '处理中...' : 'Working...'}</div> : null}
-            {renderQuickOptions()}
+          <div>
+            <strong>{language === 'zh' ? '长者申请助手' : 'Senior Application Assistant'}</strong>
+            <span>{language === 'zh' ? '请跟着助手一步一步回答' : 'Follow the assistant step by step'}</span>
           </div>
-
-          <VoiceComposer
-            value={input}
-            onChange={setInput}
-            onSubmit={() => submitAnswer(input)}
-            placeholder={phase === 'complete' ? text.disabledPlaceholder[language] : currentQuestion?.placeholder[language] ?? text.placeholder[language]}
-            disabled={phase === 'complete' || loading}
-            languageCode={voiceLanguage}
-          />
-        </section>
-
-        <aside className="result-panel large assistant-side-panel">
-          <div className="section-head">
-            <h2 className="module-title">
-              <span className="icon-pill">
-                <UserRound size={22} />
-              </span>
-              {language === 'zh' ? '屏幕确认' : 'Screen Review'}
-            </h2>
+          <div className="language-toggle-large compact-language-toggle" aria-label={language === 'zh' ? '语言选择' : 'Language selector'}>
+            <button className={language === 'zh' ? 'active' : ''} type="button" onClick={() => changeLanguage('zh')}>
+              华文
+            </button>
+            <button className={language === 'en' ? 'active' : ''} type="button" onClick={() => changeLanguage('en')}>
+              English
+            </button>
           </div>
+        </div>
 
-          {phase === 'language' ? (
-            <div className="language-card-grid">
-              <button type="button" onClick={() => selectLanguage('zh')}>
-                <Languages size={22} />
-                <strong>华文</strong>
-              </button>
-              <button type="button" onClick={() => selectLanguage('en')}>
-                <Languages size={22} />
-                <strong>English</strong>
-              </button>
-            </div>
+        <div className="wa-stream">
+          {aiMode === null ? (
+            <div className="wa-bubble">{language === 'zh' ? '正在连接 AI 助手...' : 'Connecting to AI assistant...'}</div>
           ) : null}
+          {messages.map((message, index) => renderMessageBlock(message, index))}
+          {loading ? <div className="wa-bubble">{language === 'zh' ? '处理中...' : 'Working...'}</div> : null}
+        </div>
 
-          {profileRows.length > 0 ? (
-            <div className="assistant-section">
-              <h3>
-                <Phone size={16} />
-                {language === 'zh' ? '已记录的基本资料' : 'Recorded Basic Info'}
-              </h3>
-              <div className="table-wrap">
-                <table>
-                  <tbody>
-                    {profileRows.map((row) => (
-                      <tr key={row.id}>
-                        <th>{row.label}</th>
-                        <td>{row.value}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : null}
-
-          {results.length > 0 ? (
-            <div className="assistant-section">
-              <h3>
-                <Search size={16} />
-                {language === 'zh' ? '符合资格的表格' : 'Matching Forms'}
-              </h3>
-              {renderForms()}
-            </div>
-          ) : null}
-
-          {selectedResult ? (
-            <div className="assistant-section">
-              <h3>
-                <FileText size={16} />
-                {language === 'zh' ? '浅白说明' : 'Plain Explanation'}
-              </h3>
-              <div className="insight-panel strong">
-                <p>{selectedResult.form.simpleExplanation}</p>
-              </div>
-              <div className="legal-note-list">
-                {selectedResult.form.legalNotes.map((note) => (
-                  <div className="insight-line" key={note}>
-                    {note}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {renderApplicationReview()}
-          {renderConsent()}
-          {renderCompletion()}
-
-          {application?.missingFields.length ? (
-            <div className="notice">
-              {language === 'zh' ? '还缺少：' : 'Still missing: '}
-              {application.missingFields.join(', ')}
-            </div>
-          ) : null}
-
-          {phase === 'review' && application ? (
-            <div className="button-row review-actions">
-              <button className="btn primary" type="button" onClick={startConsent}>
-                <ShieldCheck size={18} />
-                {language === 'zh' ? '资料正确，继续同意书' : 'Looks correct'}
-              </button>
-            </div>
-          ) : null}
-        </aside>
-      </div>
+        <VoiceComposer
+          value={input}
+          onChange={setInput}
+          onSubmit={() => submitAnswer(input)}
+          placeholder={
+            questionMode
+              ? text.askPrompt[language]
+              : phase === 'complete'
+                ? text.disabledPlaceholder[language]
+                : currentQuestion?.placeholder[language] ?? text.placeholder[language]
+          }
+          disabled={phase === 'complete' || loading}
+          languageCode={voiceLanguage}
+        />
+      </section>
     </div>
   );
 }

@@ -166,6 +166,13 @@ button {
   background: var(--hover);
 }
 
+.nav a.active {
+  border-color: color-mix(in srgb, var(--brand) 44%, var(--line));
+  background: color-mix(in srgb, var(--brand) 10%, var(--surface-strong));
+  color: var(--brand);
+  font-weight: 800;
+}
+
 .theme-toggle {
   display: inline-flex;
   align-items: center;
@@ -2524,4 +2531,84 @@ td {
     padding: 9px;
     font-size: 13px;
   }
+}
+
+.minimal-topbar {
+  justify-content: space-between;
+}
+
+.minimal-brand {
+  cursor: default;
+}
+
+.minimal-topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.assistant-shell .assistant-container {
+  max-width: 920px;
+  margin: 0 auto;
+}
+
+.elderly-workspace.chatbot-only {
+  gap: 12px;
+}
+
+.chatbot-full {
+  min-height: min(78vh, 860px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.chatbot-full .wa-chat-header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.compact-language-toggle {
+  min-width: 148px;
+}
+
+.assistant-message-block {
+  display: grid;
+  gap: 8px;
+  max-width: min(760px, 92%);
+}
+
+.assistant-message-block .quick-options,
+.assistant-message-block .assistant-card-list,
+.assistant-message-block .review-stack,
+.assistant-message-block .consent-list,
+.assistant-message-block .completion-panel {
+  margin-top: 2px;
+}
+
+.ask-question-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px dashed color-mix(in srgb, var(--brand) 50%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand) 6%, var(--surface-strong));
+  color: var(--brand);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.ask-question-btn:hover {
+  background: color-mix(in srgb, var(--brand) 14%, var(--surface-strong));
+}
+
+.chatbot-full .wa-stream {
+  min-height: 58vh;
 }

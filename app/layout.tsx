@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from 'next';
+import { LockToAssistant } from '@/components/AuthGuard';
 import { LanguageProvider } from '@/components/LanguageProvider';
 import './globals.css';
 
@@ -21,7 +22,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <LanguageProvider>{children}</LanguageProvider>
+        <LanguageProvider>
+          <LockToAssistant />
+          {children}
+        </LanguageProvider>
       </body>
     </html>
   );

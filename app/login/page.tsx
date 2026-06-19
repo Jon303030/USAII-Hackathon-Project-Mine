@@ -4,7 +4,8 @@ import { FormEvent, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { LogIn } from 'lucide-react';
 import { useLanguage } from '@/components/LanguageProvider';
-import { TopNav } from '@/components/TopNav';
+import { RedirectIfLoggedIn } from '@/components/AuthGuard';
+import { MinimalHeader } from '@/components/MinimalHeader';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -37,20 +38,21 @@ export default function LoginPage() {
     }
 
     localStorage.setItem('report-workflow-user', JSON.stringify(payload.user));
-    router.push('/fill');
+    router.push('/assistant');
   }
 
   return (
-    <main className="shell">
-      <TopNav />
-      <section className="login-wrap">
-        <form className="band login-panel" onSubmit={handleSubmit}>
-          <div className="page-head" style={{ marginBottom: 18 }}>
-            <div>
-              <h1>{t({ en: 'Login', zh: '登录' })}</h1>
-              <p>{t({ en: 'Demo login for the fill workflow.', zh: '填写流程的示例登录。' })}</p>
+    <RedirectIfLoggedIn>
+      <main className="shell">
+        <MinimalHeader />
+        <section className="login-wrap">
+          <form className="band login-panel" onSubmit={handleSubmit}>
+            <div className="page-head" style={{ marginBottom: 18 }}>
+              <div>
+                <h1>{t({ en: 'Login', zh: '登录' })}</h1>
+                <p>{t({ en: 'Sign in to start the senior application assistant.', zh: '登录后即可开始使用长者申请助手。' })}</p>
+              </div>
             </div>
-          </div>
 
           <div style={{ display: 'grid', gap: 14 }}>
             <label className="field">
@@ -64,7 +66,8 @@ export default function LoginPage() {
             </button>
           </div>
         </form>
-      </section>
-    </main>
+        </section>
+      </main>
+    </RedirectIfLoggedIn>
   );
 }

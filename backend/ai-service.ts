@@ -8,10 +8,14 @@ import type { GeminiAIResponse, Language, DialogState, UserProfile } from './typ
 import { SYSTEM_PROMPTS, generateContextPrompt } from './prompts';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent';
-const GEMINI_MODEL = 'gemini-3-flash-preview';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+const GEMINI_API_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
-if (!GEMINI_API_KEY) {
+export function isGeminiConfigured() {
+  return Boolean(GEMINI_API_KEY?.trim());
+}
+
+if (!isGeminiConfigured()) {
   console.warn('GEMINI_API_KEY not set, AI functions will use mock responses');
 }
 
@@ -90,7 +94,7 @@ export class GeminiAIService {
       if (!response.ok) {
         const error = await response.text();
         console.error('Gemini API Error:', error);
-        return this.getMockResponse(language, state);
+        throw new Error(`Gemini API error: ${response.status}`);
       }
 
       const data = await response.json();
@@ -98,15 +102,99 @@ export class GeminiAIService {
 
       if (!content) {
         console.warn('Invalid Gemini response');
-        return this.getMockResponse(language, state);
+        throw new Error('Invalid Gemini response');
       }
 
       const parsed = JSON.parse(content) as GeminiAIResponse;
       return this.normalizeResponse(parsed, state);
     } catch (error) {
       console.error('Gemini API call failed:', error);
-      return this.getMockResponse(language, state);
+      throw error instanceof Error ? error : new Error('Gemini API call failed');
     }
+  }
+
+  /**
+   * Plain-text Gemini reply for Q&A style prompts.
+   */
+  async generateTextReply(systemPrompt: string, userPrompt: string): Promise<string> {
+    if (!this.apiKey) {
+      throw new Error('Gemini API key is not configured');
+    }
+
+    const response = await fetch(`${GEMINI_API_URL}?key=${this.apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }],
+          },
+        ],
+        generationConfig: {
+          temperature: 0.4,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Gemini API error: ${response.status} ${error}`);
+    }
+
+    const data = await response.json();
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!content) {
+      throw new Error('Invalid Gemini text response');
+    }
+    return content;
+  }
+
+  /**
+   * Structured elderly-assistant reply.
+   */
+  async callGeminiElderly(
+    systemPrompt: string,
+    messages: GeminiMessage[],
+    responseSchema: Record<string, unknown>,
+  ): Promise<Record<string, unknown>> {
+    if (!this.apiKey) {
+      throw new Error('Gemini API key is not configured');
+    }
+
+    const response = await fetch(`${GEMINI_API_URL}?key=${this.apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: systemPrompt }],
+          },
+          ...messages.map((msg) => ({
+            role: msg.role === 'model' ? 'model' : 'user',
+            parts: msg.parts,
+          })),
+        ],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseSchema,
+          temperature: 0.3,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Gemini API error: ${response.status} ${error}`);
+    }
+
+    const data = await response.json();
+    const content = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!content) {
+      throw new Error('Invalid Gemini elderly response');
+    }
+    return JSON.parse(content) as Record<string, unknown>;
   }
 
   /**
