@@ -139,12 +139,12 @@ function statusLabel(status: EligibilityStatus, language: AppLanguage) {
 
 function aiMethodText(language: AppLanguage) {
   if (language === 'zh') {
-    return 'AI 辅助筛选：Google Gemini 2.0 Flash 负责理解用户资料与提炼表格重点；资格条件再用本地规则检查，避免只靠 AI 判断。';
+    return 'AI 辅助筛选：Google Gemini 3 Flash 负责理解用户资料与提炼表格重点；资格条件再用本地规则检查，避免只靠 AI 判断。';
   }
   if (language === 'ms') {
-    return 'Saringan bantuan AI: Google Gemini 2.0 Flash memahami maklumat pengguna dan meringkaskan borang; syarat kelayakan disemak semula dengan peraturan tempatan.';
+    return 'Saringan bantuan AI: Google Gemini 3 Flash memahami maklumat pengguna dan meringkaskan borang; syarat kelayakan disemak semula dengan peraturan tempatan.';
   }
-  return 'AI-assisted screening: Google Gemini 2.0 Flash helps interpret user details and extract form highlights; eligibility is also checked with local rules.';
+  return 'AI-assisted screening: Google Gemini 3 Flash helps interpret user details and extract form highlights; eligibility is also checked with local rules.';
 }
 
 function consentSimpleText(language: AppLanguage) {
@@ -349,8 +349,8 @@ export function ElderlyAssistantClient() {
         : '1. The system will continue checking against the basic details you provided.';
     const heading =
       language === 'zh'
-        ? `${result.form.title}\n\nAI 提炼摘要（Google Gemini 2.0 Flash）：${result.form.simpleExplanation}\n\n资格判断：${statusLabel(result.status, language)}\n\n为什么推荐：\n${matchedReasons}\n\n申请资格重点：\n${conditions}\n\n重要说明：\n${legalNotes}`
-        : `${result.form.title}\n\nAI-extracted summary (Google Gemini 2.0 Flash): ${result.form.simpleExplanation}\n\nEligibility check: ${statusLabel(result.status, language)}\n\nWhy this was recommended:\n${matchedReasons}\n\nKey eligibility points:\n${conditions}\n\nImportant notes:\n${legalNotes}`;
+        ? `${result.form.title}\n\nAI 提炼摘要（Google Gemini 3 Flash）：${result.form.simpleExplanation}\n\n资格判断：${statusLabel(result.status, language)}\n\n为什么推荐：\n${matchedReasons}\n\n申请资格重点：\n${conditions}\n\n重要说明：\n${legalNotes}`
+        : `${result.form.title}\n\nAI-extracted summary (Google Gemini 3 Flash): ${result.form.simpleExplanation}\n\nEligibility check: ${statusLabel(result.status, language)}\n\nWhy this was recommended:\n${matchedReasons}\n\nKey eligibility points:\n${conditions}\n\nImportant notes:\n${legalNotes}`;
     return heading;
   }
 

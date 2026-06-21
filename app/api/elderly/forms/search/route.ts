@@ -15,7 +15,7 @@ export async function POST(request: Request) {
     language,
     matchingMethod: {
       label: 'AI-assisted screening',
-      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-3-flash-preview',
       guardrail: 'Local eligibility rules are used to check age, income, household, housing, and document conditions.',
     },
     results: searchAssistanceForms(body.profile ?? {}, language, body.situation),
