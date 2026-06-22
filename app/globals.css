@@ -2624,6 +2624,7 @@ td {
 
 .assistant-message-block .quick-options,
 .assistant-message-block .assistant-card-list,
+.assistant-message-block .profile-review-stack,
 .assistant-message-block .review-stack,
 .assistant-message-block .consent-list,
 .assistant-message-block .completion-panel {
@@ -2746,6 +2747,14 @@ td {
   background: var(--surface-strong);
 }
 
+.hidden-file-input {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .id-capture-stage {
   position: relative;
   overflow: hidden;
@@ -2754,15 +2763,34 @@ td {
 }
 
 .id-capture-video {
+  display: block;
   width: 100%;
   min-height: 220px;
   object-fit: cover;
+}
+
+.id-capture-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 14px;
+  background: rgba(0, 0, 0, 0.62);
+  color: white;
+  text-align: center;
+  font-weight: 800;
 }
 
 .id-capture-previews {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
+}
+
+.id-capture-previews > div {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
 .id-capture-previews img {
@@ -3145,6 +3173,7 @@ td {
 }
 
 .chat-only-shell .assistant-card-list,
+.chat-only-shell .profile-review-stack,
 .chat-only-shell .review-stack,
 .chat-only-shell .id-capture-panel,
 .chat-only-shell .consent-item {

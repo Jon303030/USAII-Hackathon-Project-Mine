@@ -11,6 +11,36 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3-flash-preview';
 const GEMINI_API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
+export class GeminiApiError extends Error {
+  constructor(
+    public status: number | undefined,
+    public responseText: string,
+  ) {
+    super(`Gemini API error${status ? `: ${status}` : ''} ${responseText}`.trim());
+    this.name = 'GeminiApiError';
+  }
+}
+
+export function isGeminiQuotaError(error: unknown) {
+  const status = error instanceof GeminiApiError ? error.status : undefined;
+  const text =
+    error instanceof GeminiApiError
+      ? error.responseText
+      : error instanceof Error
+        ? error.message
+        : String(error ?? '');
+  const normalized = text.toLowerCase();
+
+  return (
+    status === 429 ||
+    normalized.includes('resource_exhausted') ||
+    normalized.includes('quota') ||
+    normalized.includes('rate limit') ||
+    normalized.includes('rate_limit') ||
+    normalized.includes('too many requests')
+  );
+}
+
 export function isGeminiConfigured() {
   return Boolean(GEMINI_API_KEY?.trim());
 }
@@ -60,13 +90,13 @@ export class GeminiAIService {
       lastError = await response.text();
       if (!retryableStatuses.has(response.status) || attempt === 2) {
         console.error('Gemini API Error:', lastError);
-        throw new Error(`Gemini API error: ${response.status} ${lastError}`);
+        throw new GeminiApiError(response.status, lastError);
       }
 
       await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
     }
 
-    throw new Error(`Gemini API error: ${lastError || 'request failed'}`);
+    throw new GeminiApiError(undefined, lastError || 'request failed');
   }
 
   /**

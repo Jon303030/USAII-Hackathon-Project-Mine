@@ -12,7 +12,7 @@ import type {
   UserProfile,
   UserSession,
 } from '@/backend/types';
-import { geminiAIService } from '@/backend/ai-service';
+import { geminiAIService, isGeminiQuotaError } from '@/backend/ai-service';
 import { SessionManager, getSessionContext } from '@/backend/fill/session-manager';
 import { FormMatcher } from '@/backend/form-matcher';
 
@@ -117,6 +117,61 @@ export function fillReply(record: FillRecord, language: LegacyLanguage = 'en') {
   return `I filled the draft with name ${record.name}, email ${record.email}, and ID ${record.id}.`;
 }
 
+const fillFallbackFields = ['name', 'email', 'id'] as const;
+
+function legacyLanguageFromApp(language: AppLanguage): LegacyLanguage {
+  return language === 'zh_CN' ? 'zh' : 'en';
+}
+
+function isGreetingMessage(message: string) {
+  return /^(hi|hello|hey|你好|您好|salam|halo)\b/i.test(message.trim()) || message.includes('进入网站');
+}
+
+function fillFallbackPrompt(field: (typeof fillFallbackFields)[number], language: LegacyLanguage) {
+  if (language === 'zh') {
+    const prompts = {
+      name: '表格上应该填写什么姓名？',
+      email: '应该使用哪一个电邮？',
+      id: '这份记录要保留哪一个 ID？',
+    };
+    return prompts[field];
+  }
+
+  const prompts = {
+    name: 'What name should I put in the form?',
+    email: 'Which email should I use?',
+    id: 'Which ID should I keep for this record?',
+  };
+  return prompts[field];
+}
+
+async function processUserMessageFallback(session: UserSession, userMessage: string): Promise<ChatResponse> {
+  const language = legacyLanguageFromApp(session.language);
+  const collected = { ...session.collectedData } as Partial<Record<(typeof fillFallbackFields)[number], string>>;
+  const firstMissing = fillFallbackFields.find((field) => !collected[field]?.trim());
+
+  if (firstMissing && userMessage.trim() && !isGreetingMessage(userMessage)) {
+    collected[firstMissing] = userMessage.trim();
+  }
+
+  const nextMissing = fillFallbackFields.find((field) => !collected[field]?.trim());
+  const record = fillFromAnswers(collected, language);
+  const reply = nextMissing ? fillFallbackPrompt(nextMissing, language) : fillReply(record, language);
+  const newState: DialogState = nextMissing ? 'GATHER_PROFILE' : 'COMPLETED';
+  const extractedData = nextMissing ? collected : record;
+
+  await SessionManager.updateCollectedData(session.sessionId, collected);
+  await SessionManager.updateState(session.sessionId, newState, userMessage, reply);
+
+  return {
+    sessionId: session.sessionId,
+    reply,
+    newState,
+    extractedData,
+    confidence: nextMissing ? 'Medium' : 'High',
+  };
+}
+
 export function buildFillInsight(record: FillRecord, messages: string[] = [], language: LegacyLanguage = 'en'): FillInsight {
   const missingFields = [
     record.name ? '' : 'Name',
@@ -182,19 +237,28 @@ export async function processUserMessage(
   // Get session context
   const sessionContext = getSessionContext(session);
 
-  // Call Gemini AI
-  const aiResponse = await geminiAIService.callGemini(
-    [
-      ...geminiMessages,
-      {
-        role: 'user',
-        parts: [{ text: userMessage }],
-      },
-    ],
-    session.language,
-    session.state,
-    sessionContext,
-  );
+  // Call Gemini AI, or continue with the local field-by-field algorithm if quota is exhausted.
+  let aiResponse: GeminiAIResponse;
+  try {
+    aiResponse = await geminiAIService.callGemini(
+      [
+        ...geminiMessages,
+        {
+          role: 'user',
+          parts: [{ text: userMessage }],
+        },
+      ],
+      session.language,
+      session.state,
+      sessionContext,
+    );
+  } catch (error) {
+    if (isGeminiQuotaError(error)) {
+      console.warn('Gemini quota/rate limit reached; using fill local fallback algorithm.');
+      return processUserMessageFallback(session, userMessage);
+    }
+    throw error;
+  }
 
   // Update user profile
   if (Object.keys(aiResponse.extracted_data).length > 0) {

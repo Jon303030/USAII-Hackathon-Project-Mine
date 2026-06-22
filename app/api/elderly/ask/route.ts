@@ -1,5 +1,6 @@
 import { answerElderlyQuestion, answerElderlyQuestionWithAI } from '@/backend/elderly/ask';
 import { isGeminiConfigured } from '@/backend/elderly/chatbot';
+import { isGeminiQuotaError } from '@/backend/ai-service';
 import type { ApplicantProfile, AssistantLanguage } from '@/backend/elderly/forms';
 
 export const runtime = 'nodejs';
@@ -41,6 +42,10 @@ export async function POST(request: Request) {
       const answer = await answerElderlyQuestionWithAI(question, language, context);
       return Response.json({ answer, aiEnabled: true });
     } catch (error) {
+      if (isGeminiQuotaError(error)) {
+        return Response.json({ answer: answerElderlyQuestion(question, language, context), aiEnabled: false });
+      }
+
       const message = error instanceof Error ? error.message : 'Gemini request failed';
       return Response.json(
         {

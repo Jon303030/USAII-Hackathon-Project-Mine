@@ -10,13 +10,15 @@ import {
   apiLanguage,
   CONSENT_ITEMS,
   copy,
+  fieldLabels,
+  fill as fillTemplate,
   t,
   voiceCode,
   type Phase,
 } from '@/elderly-assistant/flow-text';
 
 type QuickOption = { label: string; storedValue?: string };
-type MessageWidget = 'idCapture' | 'forms' | 'review' | 'consent' | 'completion';
+type MessageWidget = 'idCapture' | 'forms' | 'profileReview' | 'review' | 'consent' | 'completion';
 type Message = {
   role: 'assistant' | 'user';
   content: string;
@@ -68,6 +70,85 @@ type ApplicationPackage = {
 };
 
 type Answers = Record<string, string>;
+
+const profileAnswerOrder = [
+  'phone',
+  'englishName',
+  'icNumber',
+  'age',
+  'state',
+  'postcode',
+  'taman',
+  'addressLine',
+  'maritalStatus',
+  'children',
+  'householdIncome',
+  'disability',
+  'housingStatus',
+] as const;
+
+type ProfileAnswerKey = (typeof profileAnswerOrder)[number];
+
+const checkpointSize = 3;
+
+function answeredProfileKeys(answerState: Answers) {
+  return profileAnswerOrder.filter((key) => answerState[key]?.trim());
+}
+
+function profileFieldLabel(key: ProfileAnswerKey, language: AppLanguage) {
+  return t(language, fieldLabels[key]);
+}
+
+function profileReviewOptions(keys: ProfileAnswerKey[], language: AppLanguage): QuickOption[] {
+  return keys.map((key) => ({
+    label: profileFieldLabel(key, language),
+    storedValue: key,
+  }));
+}
+
+function findProfileReviewField(value: string, keys: ProfileAnswerKey[], language: AppLanguage) {
+  const normalized = value.trim().toLowerCase();
+  return (
+    keys.find((key) => key === value) ??
+    keys.find((key) => profileFieldLabel(key, language).toLowerCase() === normalized) ??
+    null
+  );
+}
+
+function checkpointReviewText(language: AppLanguage, finalReview = false) {
+  if (finalReview) {
+    if (language === 'zh') return '最后请检查所有答案。资料正确吗？';
+    if (language === 'ms') return 'Sila semak semua jawapan terakhir. Adakah maklumat ini betul?';
+    return 'Final check: please review all answers. Are these details correct?';
+  }
+  if (language === 'zh') return '我先帮您检查刚才 3 个答案。资料正确吗？';
+  if (language === 'ms') return 'Saya semak 3 jawapan tadi dahulu. Adakah maklumat ini betul?';
+  return 'Let us check the last 3 answers first. Are these details correct?';
+}
+
+function checkpointCorrectionText(language: AppLanguage) {
+  if (language === 'zh') return '请选择需要更正的答案。';
+  if (language === 'ms') return 'Pilih jawapan yang perlu dibetulkan.';
+  return 'Please choose the answer that needs correction.';
+}
+
+function checkpointValueText(language: AppLanguage, label: string) {
+  if (language === 'zh') return `请告诉我「${label}」的正确内容。`;
+  if (language === 'ms') return `Sila berikan nilai yang betul untuk ${label}.`;
+  return `Please type the correct value for ${label}.`;
+}
+
+function checkpointUpdatedText(language: AppLanguage, label: string, finalReview: boolean) {
+  if (language === 'zh') return `我已更新「${label}」。请再检查一次。`;
+  if (language === 'ms') return `Saya sudah kemas kini ${label}. Sila semak sekali lagi.`;
+  return finalReview ? `I updated ${label}. Please check all answers again.` : `I updated ${label}. Please check these answers again.`;
+}
+
+function chooseYesNoText(language: AppLanguage) {
+  if (language === 'zh') return '请按“正确 / 是”或“错误 / 不是”。';
+  if (language === 'ms') return 'Sila pilih Betul / Ya atau Salah / Tidak.';
+  return 'Please choose Correct / Yes or Wrong / No.';
+}
 
 type AiChatResponse = {
   aiEnabled: boolean;
@@ -147,6 +228,10 @@ function phaseForAi(phase: Phase) {
       'profileCollect',
       'addressConfirm',
       'situation',
+      'checkpointReview',
+      'checkpointCorrection',
+      'finalProfileReview',
+      'finalProfileCorrection',
     ].includes(phase)
   ) {
     return 'collect';
@@ -245,6 +330,9 @@ export function ElderlyAssistantClient() {
   const [correctionFieldId, setCorrectionFieldId] = useState<string | null>(null);
   const [aiStarted, setAiStarted] = useState(false);
   const [showLoadingBubble, setShowLoadingBubble] = useState(false);
+  const [profileReviewKeys, setProfileReviewKeys] = useState<ProfileAnswerKey[]>([]);
+  const [checkpointedAnswerCount, setCheckpointedAnswerCount] = useState(0);
+  const [finalProfileReviewed, setFinalProfileReviewed] = useState(false);
 
   const expectsAnswer = !['searching', 'idCapture', 'complete'].includes(phase) && !loading;
   const username = answers.englishName || 'user';
@@ -302,6 +390,14 @@ export function ElderlyAssistantClient() {
       widget = 'idCapture';
     }
 
+    const answeredKeys = answeredProfileKeys(nextAnswers);
+    const canCheckProfile =
+      nextPhase === 'collect' ||
+      nextPhase === 'searching' ||
+      nextPhase === 'forms' ||
+      widget === 'forms';
+    const allProfileAnswersReady = answeredKeys.length === profileAnswerOrder.length;
+
     setAnswers(nextAnswers);
     setProfileIndex(data.questionIndex ?? baseQuestionIndex);
     setResults(nextResults);
@@ -310,9 +406,41 @@ export function ElderlyAssistantClient() {
     setCurrentFieldId(nextCurrentFieldId);
     setApplication(nextApplication ?? null);
     setConsents(nextConsents);
+
+    if (canCheckProfile && allProfileAnswersReady && !finalProfileReviewed) {
+      setPhase('finalProfileReview');
+      setProfileReviewKeys(answeredKeys);
+      setAiStarted(true);
+      setCorrectionFieldId(null);
+      addAssistant(checkpointReviewText(language, true), {
+        quickOptions: yesNoOptions(),
+        widget: 'profileReview',
+        speak: true,
+      });
+      return;
+    }
+
+    if (
+      canCheckProfile &&
+      !allProfileAnswersReady &&
+      answeredKeys.length >= checkpointedAnswerCount + checkpointSize
+    ) {
+      const keysToReview = answeredKeys.slice(checkpointedAnswerCount, checkpointedAnswerCount + checkpointSize);
+      setPhase('checkpointReview');
+      setProfileReviewKeys(keysToReview);
+      setAiStarted(true);
+      setCorrectionFieldId(null);
+      addAssistant(checkpointReviewText(language), {
+        quickOptions: yesNoOptions(),
+        widget: 'profileReview',
+        speak: true,
+      });
+      return;
+    }
+
     setPhase(nextPhase);
     setAiStarted(true);
-    if (nextPhase !== 'reviewCorrection') {
+    if (nextPhase !== 'reviewCorrection' && nextPhase !== 'checkpointCorrection' && nextPhase !== 'finalProfileCorrection') {
       setCorrectionFieldId(null);
     }
 
@@ -422,6 +550,9 @@ export function ElderlyAssistantClient() {
     setIdFileName('');
     setCorrectionFieldId(null);
     setAiStarted(false);
+    setProfileReviewKeys([]);
+    setCheckpointedAnswerCount(0);
+    setFinalProfileReviewed(false);
     sessionStorage.setItem('elderly-flow-active', '1');
     setMessages([]);
     requestInitialAi();
@@ -436,6 +567,9 @@ export function ElderlyAssistantClient() {
 
     setAiStarted(true);
     setMessages([]);
+    setProfileReviewKeys([]);
+    setCheckpointedAnswerCount(0);
+    setFinalProfileReviewed(false);
     void requestAiChat(action, firstMessage, displayMessage, {
       history: [],
       answersState: emptyAnswers,
@@ -579,6 +713,134 @@ export function ElderlyAssistantClient() {
     await rebuildReview(nextAnswers, nextExtraAnswers, reviewField.label);
   }
 
+  async function showMatchedForms(reviewAnswers: Answers) {
+    setLoading(true);
+    setShowLoadingBubble(true);
+    try {
+      const response = await fetch('/api/elderly/forms/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile: toProfile(reviewAnswers),
+          language: apiLanguage(language),
+        }),
+      });
+      const data = (await response.json()) as { results?: SearchResult[]; error?: string };
+      if (!response.ok) throw new Error(data.error || 'Form search failed');
+
+      const nextResults = data.results ?? [];
+      setResults(nextResults);
+      setSelectedResult(nextResults[0] ?? null);
+      setPhase('forms');
+      setProfileReviewKeys([]);
+      setCorrectionFieldId(null);
+
+      addAssistant(
+        nextResults.length > 0
+          ? fillTemplate(t(language, copy.foundForms), { count: nextResults.length })
+          : t(language, copy.noForms),
+        {
+          widget: nextResults.length > 0 ? 'forms' : undefined,
+          speak: true,
+        },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'form search failed';
+      addAssistant(language === 'zh' ? `暂时无法搜索表格：${message}` : `I could not search the forms yet: ${message}`, { speak: true });
+    } finally {
+      setLoading(false);
+      setShowLoadingBubble(false);
+    }
+  }
+
+  async function handleProfileReviewAnswer(displayValue: string, storedValue: string) {
+    const value = storedValue.trim();
+    const finalReview = phase === 'finalProfileReview' || phase === 'finalProfileCorrection';
+    const reviewKeys = profileReviewKeys.length ? profileReviewKeys : answeredProfileKeys(answers);
+    addUser(displayValue.trim());
+    setInput('');
+
+    if (phase === 'checkpointReview' || phase === 'finalProfileReview') {
+      if (isYesResponse(value)) {
+        setCorrectionFieldId(null);
+
+        if (finalReview) {
+          const answeredCount = answeredProfileKeys(answers).length;
+          setFinalProfileReviewed(true);
+          setCheckpointedAnswerCount(answeredCount);
+          await showMatchedForms(answers);
+          return;
+        }
+
+        const highestReviewedIndex = reviewKeys.length
+          ? Math.max(...reviewKeys.map((key) => profileAnswerOrder.indexOf(key))) + 1
+          : checkpointedAnswerCount;
+        setCheckpointedAnswerCount(Math.max(checkpointedAnswerCount, highestReviewedIndex));
+        setProfileReviewKeys([]);
+        setPhase('collect');
+        void requestAiChat(
+          'message',
+          'The checked answers are correct. Please continue with the next question.',
+          t(language, copy.yes),
+          {
+            answersState: answers,
+            phaseState: 'collect',
+            showUserMessage: false,
+          },
+        );
+        return;
+      }
+
+      if (isNoResponse(value)) {
+        setCorrectionFieldId(null);
+        setPhase(finalReview ? 'finalProfileCorrection' : 'checkpointCorrection');
+        addAssistant(checkpointCorrectionText(language), {
+          quickOptions: profileReviewOptions(reviewKeys, language),
+          widget: 'profileReview',
+          speak: true,
+        });
+        return;
+      }
+
+      addAssistant(chooseYesNoText(language), {
+        quickOptions: yesNoOptions(),
+        widget: 'profileReview',
+        speak: true,
+      });
+      return;
+    }
+
+    if (!correctionFieldId) {
+      const field = findProfileReviewField(value, reviewKeys, language);
+      if (!field) {
+        addAssistant(checkpointCorrectionText(language), {
+          quickOptions: profileReviewOptions(reviewKeys, language),
+          widget: 'profileReview',
+          speak: true,
+        });
+        return;
+      }
+
+      setCorrectionFieldId(field);
+      addAssistant(checkpointValueText(language, profileFieldLabel(field, language)), { speak: true });
+      return;
+    }
+
+    const field = correctionFieldId as ProfileAnswerKey;
+    const nextAnswers = { ...answers, [field]: value };
+    const nextKeys = finalReview ? answeredProfileKeys(nextAnswers) : reviewKeys;
+    const label = profileFieldLabel(field, language);
+    setAnswers(nextAnswers);
+    setProfileReviewKeys(nextKeys);
+    setCorrectionFieldId(null);
+    setPhase(finalReview ? 'finalProfileReview' : 'checkpointReview');
+    addAssistant(checkpointUpdatedText(language, label, finalReview), {
+      quickOptions: yesNoOptions(),
+      widget: 'profileReview',
+      speak: true,
+    });
+  }
+
   async function handleReviewAnswer(displayValue: string, storedValue: string) {
     const value = storedValue.trim();
     addUser(displayValue.trim());
@@ -643,6 +905,16 @@ export function ElderlyAssistantClient() {
 
     if (phase === 'idCapture' && !idDocumentReady) return;
 
+    if (
+      phase === 'checkpointReview' ||
+      phase === 'checkpointCorrection' ||
+      phase === 'finalProfileReview' ||
+      phase === 'finalProfileCorrection'
+    ) {
+      void handleProfileReviewAnswer(displayValue, value);
+      return;
+    }
+
     if (phase === 'review' || phase === 'reviewCorrection') {
       void handleReviewAnswer(displayValue, value);
       return;
@@ -703,6 +975,33 @@ export function ElderlyAssistantClient() {
             </ul>
           </button>
         ))}
+      </div>
+    );
+  }
+
+  function renderProfileReview() {
+    const keys = profileReviewKeys.length ? profileReviewKeys : answeredProfileKeys(answers);
+    if (keys.length === 0) return null;
+    const choosingCorrection =
+      (phase === 'checkpointCorrection' || phase === 'finalProfileCorrection') && !correctionFieldId;
+
+    return (
+      <div className="review-stack profile-review-stack">
+        {keys.map((key) => {
+          const label = profileFieldLabel(key, language);
+          const value = answers[key]?.trim() || '-';
+          return choosingCorrection ? (
+            <button className="review-row review-row-button" key={key} type="button" onClick={() => submitAnswer(label, key)}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </button>
+          ) : (
+            <div className="review-row" key={key}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+            </div>
+          );
+        })}
       </div>
     );
   }
@@ -856,10 +1155,29 @@ export function ElderlyAssistantClient() {
                     ready: language === 'zh' ? '文件已准备好' : 'Document ready',
                     needBoth: language === 'zh' ? '请先拍摄正面和背面。' : 'Please capture both sides first.',
                     working: language === 'zh' ? '准备相机...' : 'Preparing camera...',
+                    choosePhoto:
+                      language === 'zh'
+                        ? '用手机拍照 / 上传'
+                        : language === 'ms'
+                          ? 'Kamera telefon / muat naik'
+                          : 'Phone camera / upload',
+                    cameraUnavailable:
+                      language === 'zh'
+                        ? '无法打开相机。请用手机拍照 / 上传按钮。'
+                        : language === 'ms'
+                          ? 'Kamera tidak dapat dibuka. Guna butang kamera telefon / muat naik.'
+                          : 'Cannot open the live camera. Use Phone camera / upload instead.',
+                    photoError:
+                      language === 'zh'
+                        ? '无法处理照片，请重新拍摄或上传。'
+                        : language === 'ms'
+                          ? 'Foto tidak dapat diproses. Sila ambil atau muat naik semula.'
+                          : 'Could not process the photo. Please capture or upload it again.',
                   }}
                 />
               ) : null}
               {message.widget === 'forms' ? renderForms() : null}
+              {message.widget === 'profileReview' ? renderProfileReview() : null}
               {message.widget === 'review' ? renderReview() : null}
               {message.widget === 'consent' ? renderConsent() : null}
               {message.widget === 'completion' ? renderCompletion() : null}

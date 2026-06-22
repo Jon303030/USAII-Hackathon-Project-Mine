@@ -60,9 +60,9 @@ export type ElderlyChatOutput = {
   error?: string;
 };
 
-const profileFieldOrder: Array<keyof ApplicantProfile> = [
-  'name',
+const profileFieldOrder = [
   'phone',
+  'name',
   'icNumber',
   'age',
   'state',
@@ -74,7 +74,46 @@ const profileFieldOrder: Array<keyof ApplicantProfile> = [
   'householdIncome',
   'disability',
   'housingStatus',
-];
+] as const satisfies readonly (keyof ApplicantProfile)[];
+
+type ProfileFieldKey = (typeof profileFieldOrder)[number];
+
+function isProfileFieldKey(key: string): key is ProfileFieldKey {
+  return (profileFieldOrder as readonly string[]).includes(key);
+}
+
+const fallbackFieldPrompts: Record<AssistantLanguage, Record<ProfileFieldKey, string>> = {
+  en: {
+    phone: 'What phone number should the volunteer use to contact you?',
+    name: 'Please tell me your full name.',
+    icNumber: 'What is your IC number?',
+    age: 'How old are you this year?',
+    state: 'Which state do you live in?',
+    postcode: 'What is your postcode?',
+    taman: 'What is your taman or area name?',
+    addressLine: 'Please say your house number and street address.',
+    maritalStatus: 'What is your marital status?',
+    children: 'How many children or dependants are under your care?',
+    householdIncome: 'About how much is your monthly household income?',
+    disability: 'Do you have any disability or long-term medical need?',
+    housingStatus: 'Do you own, rent, or stay with family?',
+  },
+  zh: {
+    phone: '请问之后志愿者应该用哪一个电话号码联系您？',
+    name: '请告诉我您的姓名。',
+    icNumber: '请问您的身份证号码是什么？',
+    age: '请问您今年几岁？',
+    state: '您住在哪一个州属？',
+    postcode: '您的邮编是多少？',
+    taman: '您的花园或地区名称是什么？',
+    addressLine: '请说出您的门牌号码和街道地址。',
+    maritalStatus: '请问您的婚姻状况是什么？',
+    children: '您照顾的孩子或受扶养人有几位？',
+    householdIncome: '每月家庭总收入大概是多少？',
+    disability: '是否有残障或长期医疗需要？',
+    housingStatus: '您是自住、租屋，还是和家人同住？',
+  },
+};
 
 const elderlyResponseSchema = {
   type: 'object',
@@ -177,7 +216,7 @@ function mergeProfile(profile: ApplicantProfile, updates: Record<string, unknown
     if (value === undefined || value === null) continue;
     const text = String(value).trim();
     if (!text) continue;
-    if (key in next || profileFieldOrder.includes(key as keyof ApplicantProfile)) {
+    if (key in next || isProfileFieldKey(key)) {
       (next as Record<string, string>)[key] = text;
     }
   }
@@ -201,6 +240,229 @@ function mapWidget(widget: unknown): ElderlyChatOutput['widget'] {
     return widget;
   }
   return undefined;
+}
+
+function foundFormsText(language: AssistantLanguage, count: number) {
+  if (language === 'zh') {
+    return `我用本地规则筛选出 ${count} 种推荐表格。您可以说号码或点击选择。`;
+  }
+  return `I found ${count} recommended form types using the local rules. You can say the number or tap one.`;
+}
+
+function noFormsText(language: AssistantLanguage) {
+  return language === 'zh' ? '目前没有找到合适的表格。' : 'No suitable forms were found right now.';
+}
+
+function idCaptureIntroText(language: AssistantLanguage) {
+  return language === 'zh'
+    ? '现在请拍摄身份证的正面和背面。系统会自动把两张照片转换成 PDF。'
+    : 'Now please photograph the front and back of your ID. The system will automatically convert both photos into a PDF.';
+}
+
+function reviewReadyText(language: AssistantLanguage) {
+  return language === 'zh'
+    ? '申请草稿准备好了。请检查资料是否正确。'
+    : 'The draft is ready. Please check whether the details are correct.';
+}
+
+function continueSignal(message: string) {
+  return /checked answers are correct|please continue with the next question/i.test(message);
+}
+
+function selectResultFromMessage(message: string, results: SearchResult[]) {
+  const normalized = message.trim().toLowerCase();
+  const numericChoice = normalized.match(/\b\d+\b/)?.[0];
+  if (numericChoice) {
+    const index = Number.parseInt(numericChoice, 10) - 1;
+    if (results[index]) return results[index];
+  }
+
+  return (
+    results.find((result) => result.form.id.toLowerCase() === normalized) ??
+    results.find((result) => result.form.title.toLowerCase() === normalized) ??
+    results.find((result) => normalized.includes(result.form.title.toLowerCase())) ??
+    null
+  );
+}
+
+function selectedResultFromState(results: SearchResult[], selectedFormId?: string | null) {
+  return results.find((result) => result.form.id === selectedFormId) ?? results[0] ?? null;
+}
+
+function fallbackBase(input: ElderlyChatInput, overrides: Partial<ElderlyChatOutput>): ElderlyChatOutput {
+  return {
+    aiEnabled: false,
+    reply: '',
+    profile: input.profile,
+    phase: input.phase,
+    questionIndex: input.questionIndex,
+    results: input.results,
+    selectedFormId: input.selectedFormId ?? null,
+    extraAnswers: input.extraAnswers,
+    currentApplicationFieldId: input.currentApplicationFieldId ?? null,
+    consents: input.consents,
+    shouldSpeak: true,
+    ...overrides,
+  };
+}
+
+export function processElderlyChatFallback(input: ElderlyChatInput): ElderlyChatOutput {
+  let profile = { ...input.profile };
+  let results = input.results;
+  let selectedFormId = input.selectedFormId ?? null;
+  let extraAnswers = { ...input.extraAnswers };
+  let currentApplicationFieldId = input.currentApplicationFieldId ?? null;
+  const consents = [...input.consents];
+  const userMessage = input.action === 'init' ? '' : input.userMessage?.trim() ?? '';
+
+  if (input.action === 'init' || input.phase === 'collect' || input.phase === 'searching') {
+    if (input.action === 'message' && userMessage && !continueSignal(userMessage)) {
+      const indexedField = profileFieldOrder[input.questionIndex];
+      const missingIndex = nextMissingProfileIndex(profile);
+      const targetField =
+        indexedField && !profile[indexedField]?.trim()
+          ? indexedField
+          : missingIndex >= 0
+            ? profileFieldOrder[missingIndex]
+            : null;
+
+      if (targetField) {
+        profile = { ...profile, [targetField]: userMessage };
+      }
+    }
+
+    const nextMissingIndex = nextMissingProfileIndex(profile);
+    if (nextMissingIndex >= 0) {
+      const nextField = profileFieldOrder[nextMissingIndex];
+      return fallbackBase(input, {
+        reply: fallbackFieldPrompts[input.language][nextField],
+        profile,
+        phase: 'collect',
+        questionIndex: nextMissingIndex,
+      });
+    }
+
+    results = searchAssistanceForms(profile, input.language);
+    selectedFormId = results[0]?.form.id ?? null;
+    return fallbackBase(input, {
+      reply: results.length > 0 ? foundFormsText(input.language, results.length) : noFormsText(input.language),
+      profile,
+      phase: 'forms',
+      questionIndex: profileFieldOrder.length,
+      results,
+      selectedFormId,
+      widget: results.length > 0 ? 'forms' : undefined,
+    });
+  }
+
+  if (input.phase === 'forms' || input.phase === 'explain') {
+    if (results.length === 0) {
+      results = searchAssistanceForms(profile, input.language);
+    }
+
+    const selected = selectResultFromMessage(userMessage, results) ?? selectedResultFromState(results, selectedFormId);
+    if (!selected) {
+      return fallbackBase(input, {
+        reply: noFormsText(input.language),
+        profile,
+        phase: 'forms',
+        results,
+      });
+    }
+
+    selectedFormId = selected.form.id;
+    currentApplicationFieldId = 'documentsReady';
+    return fallbackBase(input, {
+      reply: `${selected.form.title}\n\n${idCaptureIntroText(input.language)}`,
+      profile,
+      phase: 'apply',
+      results,
+      selectedFormId,
+      currentApplicationFieldId,
+    });
+  }
+
+  if (input.phase === 'apply') {
+    const selected = selectedResultFromState(results, selectedFormId);
+    if (!selected) {
+      results = searchAssistanceForms(profile, input.language);
+      selectedFormId = results[0]?.form.id ?? null;
+      return fallbackBase(input, {
+        reply: results.length > 0 ? foundFormsText(input.language, results.length) : noFormsText(input.language),
+        profile,
+        phase: 'forms',
+        results,
+        selectedFormId,
+        widget: results.length > 0 ? 'forms' : undefined,
+      });
+    }
+
+    if (!extraAnswers.documentsReady && /id|document|captured|ready|pdf|身份证|文件/.test(userMessage.toLowerCase())) {
+      extraAnswers = { ...extraAnswers, documentsReady: userMessage };
+    }
+
+    if (extraAnswers.documentsReady || currentApplicationFieldId === 'documentsReady') {
+      const application = buildApplicationPackage({
+        formId: selected.form.id,
+        profile,
+        extraAnswers,
+        consents,
+        language: input.language,
+      });
+      return fallbackBase(input, {
+        reply: reviewReadyText(input.language),
+        profile,
+        phase: 'review',
+        results,
+        selectedFormId: selected.form.id,
+        extraAnswers,
+        currentApplicationFieldId: null,
+        application,
+        consents,
+        widget: 'review',
+      });
+    }
+
+    return fallbackBase(input, {
+      reply: idCaptureIntroText(input.language),
+      profile,
+      phase: 'apply',
+      results,
+      selectedFormId: selected.form.id,
+      currentApplicationFieldId: 'documentsReady',
+    });
+  }
+
+  if (input.phase === 'review' || input.phase === 'consent' || input.phase === 'complete') {
+    const selected = selectedResultFromState(results, selectedFormId);
+    const application = selected
+      ? buildApplicationPackage({
+          formId: selected.form.id,
+          profile,
+          extraAnswers,
+          consents,
+          language: input.language,
+        })
+      : null;
+
+    return fallbackBase(input, {
+      reply: input.phase === 'consent' ? reviewReadyText(input.language) : reviewReadyText(input.language),
+      profile,
+      phase: input.phase,
+      results,
+      selectedFormId: selected?.form.id ?? selectedFormId,
+      application,
+      consents,
+      widget: input.phase === 'consent' ? 'consent' : 'review',
+    });
+  }
+
+  return fallbackBase(input, {
+    reply: fallbackFieldPrompts[input.language].phone,
+    profile,
+    phase: 'collect',
+    questionIndex: 0,
+  });
 }
 
 export async function processElderlyChat(input: ElderlyChatInput): Promise<ElderlyChatOutput> {
